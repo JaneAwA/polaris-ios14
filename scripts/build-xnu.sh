@@ -68,6 +68,11 @@ if [ "$PATCH_SET" = "series" ]; then
 		case "$p" in ''|\#*) continue ;; esac
 		f="${REPO}/patches/${p}"
 		[ -f "$f" ] || die "missing patch ${p}"
+		# A patch carrying CR bytes applies or not depending on the git version's
+		# CRLF heuristic -- it passed locally and failed on the runner. Refuse it.
+		if [ "$(LC_ALL=C tr -d '\r' < "$f" | wc -c)" != "$(wc -c < "$f")" ]; then
+			die "patch ${p} contains CR bytes; regenerate it as a git diff on an LF tree"
+		fi
 		if ! git apply -p1 --check "$f"; then
 			printf 'APPLY-CHECK FAILED: %s\n' "$p"
 			die "patch does not apply to ${XNU_TAG}"

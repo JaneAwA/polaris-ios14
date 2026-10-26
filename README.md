@@ -78,7 +78,8 @@ Boot arguments for this kernel: `unentitled_ios_sim_launch=1 sweet_ios_userland=
 | #4 | POLARIS, 0001-0004 | whole kernel compiled except `libkern/os/log.c`, `bsd/kern/subr_log.c`, `libkern/c++/OSKext.cpp`: `<os/firehose_buffer_private.h>` is closed and no KDK is installed on the runner (0005) |
 | #5 | POLARIS, 0001-0005 | cancelled: that revision of 0005 still left `FIREHOSE_BUFFER_KERNEL_CHUNK_COUNT` (used by `log.c:702`) undefined and redefined `FIREHOSE_CHUNK_SIZE` to a value chunk helpers do not use. Fixed before pushing, see below |
 | #6 | POLARIS, 0001-0005 (corrected) | cancelled before it reached the link: `LD_KERNEL_ARCHIVES` still carried `-lfirehose_kernel`, and `libfirehose_kernel.a` exists only inside a KDK. Fixed by 0006 |
-| #7 | POLARIS, 0001-0006 | running |
+| #7 | POLARIS, 0001-0006 | died in the patch check, not the build: 0006 had been produced with plain `diff -u` on a CRLF checkout, so a mixed-CR patch passed on the authoring machine and failed on the runner. Regenerated as a `git diff` on an LF tree; the script now refuses patches containing CR bytes |
+| #8 | POLARIS, 0001-0006 (LF) | running |
 
 ### What the closed header has to supply, determined by static audit
 
