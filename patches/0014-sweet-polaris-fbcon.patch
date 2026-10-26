@@ -1,15 +1,3 @@
-diff --git a/osfmk/conf/files b/osfmk/conf/files
-index a7e18d8..74faefd 100644
---- a/osfmk/conf/files
-+++ b/osfmk/conf/files
-@@ -327,6 +327,7 @@ osfmk/kern/kern_monotonic.c optional monotonic
- 
- osfmk/console/serial_general.c	standard
- osfmk/console/serial_console.c	optional	serial_console
-+osfmk/console/iso_font.c	optional	serial_console
- osfmk/console/video_scroll.c	optional	video_console
- osfmk/console/video_console.c	optional	video_console
- 
 diff --git a/pexpert/arm/pe_kprintf.c b/pexpert/arm/pe_kprintf.c
 index 8475cd6..7ca7579 100644
 --- a/pexpert/arm/pe_kprintf.c
@@ -31,10 +19,10 @@ index 8475cd6..7ca7579 100644
  
  	if (serial_init()) {
 diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
-index 3a705d3..d7e795a 100644
+index 3a705d3..4ba8493 100644
 --- a/pexpert/arm/pe_serial.c
 +++ b/pexpert/arm/pe_serial.c
-@@ -809,6 +809,179 @@ SECURITY_READ_ONLY_LATE(static struct pe_serial_functions) vmapple_uart_serial_f
+@@ -809,6 +809,191 @@ SECURITY_READ_ONLY_LATE(static struct pe_serial_functions) vmapple_uart_serial_f
  
  /*****************************************************************************/
  
@@ -134,11 +122,15 @@ index 3a705d3..d7e795a 100644
 +static void
 +fbcon_init(void)
 +{
-+	if (fbcon_base != NULL || !pmap_initialized) {
-+		return;
++	vm_offset_t va;
++
++	if (fbcon_base != NULL) {
++		return;         /* mapped and cleared already: keep the log on screen */
 +	}
-+	/* The mapping has to wait for pmap_init; serial_init() runs again later. */
-+	vm_offset_t va = ml_io_map_wcomb((vm_offset_t)FBCON_BASE, FBCON_HEIGHT * FBCON_STRIDE);
++	if (!pmap_initialized) {
++		return;         /* mapping has to wait for pmap_init; serial_init() runs again */
++	}
++	va = ml_io_map_wcomb((vm_offset_t)FBCON_BASE, FBCON_HEIGHT * FBCON_STRIDE);
 +	if (va == 0) {
 +		return;
 +	}
@@ -196,6 +188,14 @@ index 3a705d3..d7e795a 100644
 +	if (fbcon_registered) {
 +		return;
 +	}
++	/*
++	 * serial_init() is called once before arm_vm_init() and once after, so
++	 * the early attempt just fails to map and the later one registers.
++	 */
++	fbcon_init();
++	if (fbcon_base == NULL) {
++		return;
++	}
 +	fbcon_registered = 1;
 +	register_serial_functions(&polaris_fbcon_functions);
 +}
@@ -214,7 +214,7 @@ index 3a705d3..d7e795a 100644
  static void
  register_serial_functions(struct pe_serial_functions *fns)
  {
-@@ -829,6 +1002,8 @@ serial_init(void)
+@@ -829,6 +1014,8 @@ serial_init(void)
  
  	struct pe_serial_functions *fns = gPESF;
  

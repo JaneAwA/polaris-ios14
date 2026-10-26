@@ -12,7 +12,9 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'loader/**'
+      # Only the C/asm that goes into out/Image. loader/tools is host Python
+      # and must not cost a runner.
+      - 'loader/shim/**'
       - 'scripts/build-shim.sh'
       - '.github/workflows/shim.yml'
 
