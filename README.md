@@ -86,7 +86,7 @@ Boot arguments for this kernel: `unentitled_ios_sim_launch=1 sweet_ios_userland=
 | #12 | POLARIS, 0001-0011 | down to a single file: `bsd/kern/kern_csr.c` does not compile because its `#else` branch reads `boot_args->flags` / `csrActiveConfig`, which exist only in `pexpert/pexpert/i386/boot.h`. `CONFIG_CSR_FROM_DT` selects the arm64 branch that reads the policy out of the device tree. Fixed by 0012 |
 | #13 | POLARIS, 0001-0012 | **the kernel is built and linked**: `LD kernel.release.polaris.unstripped`, `DSYMUTIL`, `STRIP`, `built kernel at .../kernel.release.polaris`. The run still reported failure because `all` then runs `config_all` over `CONFIG_SUBDIRS = config tools san`, and `tools/lldbmacros` is Python 2 (`print helpdoc`). Fixed in the build script |
 | #14 | POLARIS, 0001-0012 + `CONFIG_SUBDIRS=config` | the override did not work: make propagates command-line variables through `MAKEFLAGS`, so the *inner* `config/Makefile` also saw `CONFIG_SUBDIRS=config` and recursed into `config/config`. Fixed by 0013, which edits `Makefile:237` instead |
-| #15 | POLARIS, 0001-0013 | running |
+| #15 | POLARIS, 0001-0013 | **success**. `make` exits 0, the kernel is built, linked, stripped, and uploaded: `kernel.release.polaris`, 8,434,400 bytes, cputype arm64 subtype 0 (no PAC), 17 segments, entry via `LC_UNIXTHREAD`. No fixup command at all, which is correct: XNU links `-static` at fixed virtual addresses and KASLR only moves physical memory |
 
 ### The 209 undefined symbols, and why they are not a porting bug
 

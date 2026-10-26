@@ -1,0 +1,50 @@
+name: shim
+
+# Builds the EL1 loader. Separate from the kernel workflow on purpose: the
+# kernel needs a 7195 source tree and a macOS SDK, the loader needs neither --
+# only a freestanding aarch64 compiler, which zig provides in one tarball.
+#
+# The loader is packed locally together with the kernel, because the boot image
+# also needs the stock polaris DTB tail (30 MB, extracted from the phone's own
+# boot.img) and that has no business in a git repository.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'loader/**'
+      - 'scripts/build-shim.sh'
+      - '.github/workflows/shim.yml'
+
+jobs:
+  shim:
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch zig
+        run: |
+          set -euo pipefail
+          ZIG_VERSION=0.13.0
+          URL="https://ziglang.org/download/${ZIG_VERSION}/zig-macos-aarch64-${ZIG_VERSION}.tar.xz"
+          echo "downloading $URL"
+          curl -fsSL "$URL" -o zig.tar.xz
+          tar xf zig.tar.xz
+          echo "ZIG=$PWD/zig-macos-aarch64-${ZIG_VERSION}/zig" >> "$GITHUB_ENV"
+          "$PWD/zig-macos-aarch64-${ZIG_VERSION}/zig" version
+
+      - name: Build
+        run: |
+          set -o pipefail
+          chmod +x scripts/build-shim.sh
+          bash scripts/build-shim.sh 2>&1 | tee shim.log
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shim-Image
+          path: |
+            out/Image
+            out/shim.elf
+            shim.log
+          if-no-files-found: error
