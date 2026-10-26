@@ -1,0 +1,19 @@
+diff --git a/Makefile b/Makefile
+index 9b62aad..e4f4611 100644
+--- a/Makefile
++++ b/Makefile
+@@ -234,7 +234,13 @@ ALL_SUBDIRS = \
+ 	config \
+ 	san
+ 
+-CONFIG_SUBDIRS = config tools san
++# `tools` is dropped from the post-link pass: it recurses into
++# tools/lldbmacros, whose macros are Python 2 (`print helpdoc`), and a runner
++# with only python3 therefore fails *after* the kernel has been built and
++# linked. Nothing in that directory is part of the kernel image. `config` must
++# stay -- it generates the symbolset and KPI lists that the link itself reads --
++# and `san` is only used by KASAN builds.
++CONFIG_SUBDIRS = config san
+ 
+ INSTINC_SUBDIRS = $(ALL_SUBDIRS) EXTERNAL_HEADERS
+ INSTINC_SUBDIRS_X86_64 = $(INSTINC_SUBDIRS)
