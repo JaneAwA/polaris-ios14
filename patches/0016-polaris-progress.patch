@@ -1,0 +1,275 @@
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -212,6 +212,34 @@
+ 
+ 
+ /*
++ * POLARIS bring-up progress marks.
++ *
++ * SDM845 has no debug UART, nothing is cached this early, and the loader
++ * hands over with the MMU off, so every address reached from here is
++ * physical.  The only observable is the splash framebuffer.  Each mark
++ * paints one 96x96 cell at x = idx*100, y = 0..95, so a photo of the screen
++ * shows exactly how far the kernel got: count the cells.
++ *
++ *  0 entry            4 SP_EL0 + lr = arm_init
++ *  1 OSLAR/DAIF/mov   5 mach header read, bases adjusted
++ *  2 boot_args loaded 6 V=P bootstrap map built
++ *  3 SP_EL1 set       7 KVA bootstrap map built
++ */
++.macro POLARIS_MARK
++	MOV64	x9, (0x9d400000 + (($0) * 400))
++	MOV64	x10, ($1)
++	mov	x11, #96
++9990:	mov	x12, #96
++9991:	str	w10, [x9], #4
++	subs	x12, x12, #1
++	b.ne	9991b
++	add	x9, x9, #(4320 - 384)
++	subs	x11, x11, #1
++	b.ne	9990b
++	dsb	sy
++.endm
++
++/*
+  * __start trampoline is located at a position relative to LowResetVectorBase
+  * so that iBoot can compute the reset vector position to set IORVBAR using
+  * only the kernel entry point.  Reset vector = (__start & ~0xfff)
+@@ -232,40 +260,108 @@
+ 	.global	EXT(LowExceptionVectorBase)
+ LEXT(LowExceptionVectorBase)
+ 	/* EL1 SP 0 */
+-	b		.
++	b		Lpolaris_fault
+ 	.align	7
+-	b		.
++	b		Lpolaris_fault
+ 	.align	7
+-	b		.
++	b		Lpolaris_fault
+ 	.align	7
+-	b		.
++	b		Lpolaris_fault
+ 	/* EL1 SP1 */
+ 	.align	7
+-	b		.
++	b		Lpolaris_fault
+ 	.align	7
+-	b		.
++	b		Lpolaris_fault
+ 	.align	7
+-	b		.
++	b		Lpolaris_fault
+ 	.align	7
+-	b		.
++	b		Lpolaris_fault
+ 	/* EL0 64 */
+ 	.align	7
+-	b		.
++	b		Lpolaris_fault
+ 	.align	7
+-	b		.
++	b		Lpolaris_fault
+ 	.align	7
+-	b		.
++	b		Lpolaris_fault
+ 	.align	7
+-	b		.
++	b		Lpolaris_fault
+ 	/* EL0 32 */
+ 	.align	7
+-	b		.
++	b		Lpolaris_fault
+ 	.align	7
+-	b		.
++	b		Lpolaris_fault
+ 	.align	7
+-	b		.
++	b		Lpolaris_fault
+ 	.align	7
+-	b		.
++	b		Lpolaris_fault
++/*
++ * POLARIS early fault reporter.
++ *
++ * The 16 slots above were 'b .', which is indistinguishable from a hang: the
++ * CPU just stops, with ELR_EL1 holding the faulting PC and no way to read it.
++ * Paint instead, then park.  This only works while the MMU is off, where every
++ * address is physical and the framebuffer is directly writable; a fault after
++ * the MMU switch lands here too, faults again, and parks the same way.
++ *
++ * Screen layout, y in pixels:
++ *   150..469  black band
++ *   150..173  white line            -> a fault happened
++ *   200..263  bar, 16 px per unit   -> ESR_EL1[31:26], the exception class
++ *   300..363  bar,  4 px per unit   -> ELR_EL1[11:4], the faulting PC
++ *                                      (page-relative, 16-byte granularity)
++ */
++Lpolaris_fault:
++	mrs		x9, esr_el1
++	mrs		x10, elr_el1
++
++	/* Black band, so the bars never blend into a red or green screen. */
++	MOV64	x11, (0x9d400000 + 150 * 4320)
++	mov		x12, xzr
++	mov		x13, #320
++9990:	mov		x14, #270
++9991:	str		w12, [x11], #4
++	subs	x14, x14, #1
++	b.ne	9991b
++	subs	x13, x13, #1
++	b.ne	9990b
++
++	MOV64	x11, (0x9d400000 + 200 * 4320)
++	lsr		x13, x9, #26
++	and		x13, x13, #0x3f
++	lsl		x13, x13, #4
++	bl		Lpolaris_bar
++
++	MOV64	x11, (0x9d400000 + 300 * 4320)
++	lsr		x13, x10, #4
++	and		x13, x13, #0xff
++	lsl		x13, x13, #2
++	bl		Lpolaris_bar
++
++9993:	wfi
++	b		9993b
++
++/*
++ * x11 = first pixel of the bar, x13 = width in pixels (0..1020).
++ * Draws 64 rows of white and leaves x11 at the end of the last row.
++ * Uses lr, so it may only be called from Lpolaris_fault.
++ */
++Lpolaris_bar:
++	movz	w12, #0xffff
++	movk	w12, #0xffff, lsl #16
++	mov		x14, #64
++	lsl		x16, x13, #2
++	mov		x17, #4320
++	sub		x17, x17, x16
++	cbz		x13, 9997f
++9994:	mov		x15, x13
++9995:	str		w12, [x11], #4
++	subs	x15, x15, #1
++	b.ne	9995b
++	add		x11, x11, x17
++	subs	x14, x14, #1
++	b.ne	9994b
++9997:	ret
++
+ 	.align 12, 0
+ 
+ #if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
+@@ -451,30 +547,7 @@
+ 	.globl EXT(start_first_cpu)
+ LEXT(start_first_cpu)
+ 
+-	/*
+-	 * POLARIS bring-up probe #1.
+-	 *
+-	 * There is no debug UART on SDM845 and no console this early, and every
+-	 * early fault spins forever in LowExceptionVectorBase, so a silent hang
+-	 * looks exactly like a dead kernel.  Paint a green block straight into
+-	 * the physical splash framebuffer while the MMU is still off (the loader
+-	 * runs identity-mapped), which is the only proof we can get that the
+-	 * kernel executed its first instruction.
+-	 */
+-	movz	x9, #0x9d40, lsl #16			// splash framebuffer, physical
+-	movz	w10, #0xff00
+-	movk	w10, #0xff00, lsl #16			// opaque green
+-	mov	x11, #120				// 120 scanlines
+-Lpolaris_probe1_row:
+-	mov	x12, #240				// 240 pixels each
+-Lpolaris_probe1_col:
+-	str	w10, [x9], #4
+-	subs	x12, x12, #1
+-	b.ne	Lpolaris_probe1_col
+-	add	x9, x9, #(4320 - 960)			// skip the rest of the line
+-	subs	x11, x11, #1
+-	b.ne	Lpolaris_probe1_row
+-	dsb	sy
++	POLARIS_MARK 0, 0xff00ff00
+ 
+ 	// Unlock the core for debugging
+ 	msr		OSLAR_EL1, xzr
+@@ -483,6 +556,8 @@
+ 	mov		x20, x0
+ 	mov		x21, #0
+ 
++	POLARIS_MARK 1, 0xffff00ff
++
+ 	// Set low reset vector before attempting any loads
+ 	adrp	x0, EXT(LowExceptionVectorBase)@page
+ 	add		x0, x0, EXT(LowExceptionVectorBase)@pageoff
+@@ -496,28 +571,7 @@
+ 	adrp	x25, EXT(bootstrap_pagetables)@page	// Get the start of the page tables
+ 	ldr		x26, [x20, BA_BOOT_FLAGS]			// Get the kernel boot flags
+ 
+-	/*
+-	 * POLARIS bring-up probe #2: the boot_args block was readable, so the
+-	 * pointer the loader handed us and the fields the bootstrap needs are
+-	 * sane.  Magenta block just below probe #1, still MMU off.
+-	 */
+-	movz	x9, #0x9d40, lsl #16
+-	movz	x13, #0x7e9
+-	add	x9, x9, x13, lsl #8			// 120 * 4320 = 0x7e900
+-	add	x9, x9, x13
+-	movz	w10, #0x00ff
+-	movk	w10, #0xffff, lsl #16			// opaque magenta
+-	mov	x11, #120
+-Lpolaris_probe2_row:
+-	mov	x12, #240
+-Lpolaris_probe2_col:
+-	str	w10, [x9], #4
+-	subs	x12, x12, #1
+-	b.ne	Lpolaris_probe2_col
+-	add	x9, x9, #(4320 - 960)
+-	subs	x11, x11, #1
+-	b.ne	Lpolaris_probe2_row
+-	dsb	sy
++	POLARIS_MARK 2, 0xff00ffff
+ 
+ 	// Clear the register that will be used to store the userspace thread pointer and CPU number.
+ 	// We may not actually be booting from ordinal CPU 0, so this register will be updated
+@@ -539,6 +593,8 @@
+ 
+ 	mov		sp, x0
+ 
++	POLARIS_MARK 3, 0xffffff00
++
+ 	// Set up interrupt stack pointer
+ 	adrp	x0, EXT(intstack_top)@page			// Load top of irq stack
+ 	add		x0, x0, EXT(intstack_top)@pageoff
+@@ -553,6 +609,8 @@
+ 	add		lr, lr, x22							// Convert to KVA
+ 	sub		lr, lr, x23
+ 
++	POLARIS_MARK 4, 0xff0000ff
++
+ 	/*
+ 	 * Set up the bootstrap page tables with a single block entry for the V=P
+ 	 * mapping, a single block entry for the trampolined kernel address (KVA),
+@@ -615,6 +673,8 @@
+ 	add		x22, x22, x18
+ 	add		x23, x23, x18
+ 
++	POLARIS_MARK 5, 0xffff8000
++
+ 	/*
+ 	 * x0  - V=P virtual cursor
+ 	 * x4  - V=P physical cursor
+@@ -647,10 +707,14 @@
+ 	/* create_bootstrap_mapping(vbase, pbase, num_ents, L1 table, freeptr) */
+ 	create_bootstrap_mapping x0,  x4,  x5, x1, x2, x6, x10, x11, x12, x13
+ 
++	POLARIS_MARK 6, 0xff8000ff
++
+ 	/* Setup the KVA bootstrap mapping */
+ 	lsr		x5,  x24, #(ARM_TT_L2_SHIFT)
+ 	create_bootstrap_mapping x14, x15, x5, x3, x2, x9, x10, x11, x12, x13
+ 
++	POLARIS_MARK 7, 0xffffffff
++
+ 	/* Ensure TTEs are visible */
+ 	dsb		ish
+ 
