@@ -1,0 +1,63 @@
+diff --git a/bsd/sys/make_symbol_aliasing.sh b/bsd/sys/make_symbol_aliasing.sh
+index 24fb244..51463b4 100755
+--- a/bsd/sys/make_symbol_aliasing.sh
++++ b/bsd/sys/make_symbol_aliasing.sh
+@@ -36,9 +36,56 @@ OUTPUT="$2"
+ 
+ AVAILABILITY_PL="${SDKROOT}/${DRIVERKITROOT}/usr/local/libexec/availability.pl"
+ 
++# SWEET: availability.pl ships in Apple's internal SDKs and in Xcode SDKs
++# older than macOS 14. <sys/cdefs.h> only includes the generated header when
++# KERNEL is *not* defined, so a kernel build never reads it -- but build_setup
++# still runs this script, and a public SDK would abort the whole build here.
++# Generate the same shape of table from a fixed release list instead.
+ if [ ! -x "${AVAILABILITY_PL}" ] ; then
+-    echo "Unable to locate ${AVAILABILITY_PL} (or not executable)" >&2
+-    exit 1
++    echo "note: ${AVAILABILITY_PL} not found, using the built-in release table" >&2
++    set -- "$SDKROOT" "$OUTPUT"
++    {
++        printf '%s\n' '/* generated without availability.pl (public SDK) */' \
++            '#ifndef _CDEFS_H_' \
++            '# error "Never use <sys/_symbol_aliasing.h> directly.  Use <sys/cdefs.h> instead."' \
++            '#endif' ''
++        for ver in 10.0 10.1 10.2 10.3 10.4 10.5 10.6 10.7 10.8 10.9 10.10 10.11 \
++                   10.12 10.13 10.14 10.15 11.0 11.1 11.2 11.3 11.4 11.5 11.6; do
++            set -- $(echo "$ver" | tr '.' ' ')
++            major=$1
++            minor=$2
++            if [ "$major" -lt 10 ] || { [ "$major" -eq 10 ] && [ "$minor" -lt 10 ]; }; then
++                value=$(printf "%d%d0" "$major" "$minor")
++                str=$(printf "__MAC_%d_%d" "$major" "$minor")
++            else
++                value=$(printf "%d%02d00" "$major" "$minor")
++                str=$(printf "__MAC_%d_%d" "$major" "$minor")
++            fi
++            echo "#if defined(__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= ${value}"
++            echo "#define __DARWIN_ALIAS_STARTING_MAC_${str}(x) x"
++            echo "#else"
++            echo "#define __DARWIN_ALIAS_STARTING_MAC_${str}(x)"
++            echo "#endif"
++            echo ""
++        done
++        for ver in 1.0 2.0 3.0 3.1 3.2 4.0 5.0 5.1 6.0 7.0 7.1 8.0 9.0 9.1 9.2 9.3 \
++                   10.0 10.1 10.2 10.3 11.0 11.1 11.2 11.3 11.4 12.0 12.1 12.2 12.3 12.4 \
++                   13.0 13.1 13.2 13.3 13.4 13.5 13.6 13.7 14.0 14.1 14.2 14.3 14.4 \
++                   14.5 14.6 14.7 14.8; do
++            set -- $(echo "$ver" | tr '.' ' ')
++            major=$1
++            minor=$2
++            value=$(printf "%d%02d00" "$major" "$minor")
++            str=$(printf "__IPHONE_%d_%d" "$major" "$minor")
++            echo "#if defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__) && __ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__ >= ${value}"
++            echo "#define __DARWIN_ALIAS_STARTING_IPHONE_${str}(x) x"
++            echo "#else"
++            echo "#define __DARWIN_ALIAS_STARTING_IPHONE_${str}(x)"
++            echo "#endif"
++            echo ""
++        done
++    } > "$OUTPUT"
++    exit 0
+ fi
+ 	    
+ {
