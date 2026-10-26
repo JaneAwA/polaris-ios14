@@ -1,0 +1,5 @@
+# keep shell scripts, patches and workflow YAML byte-exact on every checkout
+* text=auto eol=lf
+*.patch -text
+*.sh text eol=lf
+*.yml text eol=lf
