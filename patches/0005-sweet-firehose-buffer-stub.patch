@@ -1,0 +1,122 @@
+diff --git a/bsd/kern/subr_log.c b/bsd/kern/subr_log.c
+index b3352a4..6303bb4 100644
+--- a/bsd/kern/subr_log.c
++++ b/bsd/kern/subr_log.c
+@@ -920,7 +920,10 @@ oslog_init(void)
+ 	}
+ 	kernel_firehose_addr += PAGE_SIZE;
+ 	/* register buffer with firehose */
+-	kernel_firehose_addr = (vm_offset_t)__firehose_buffer_create((size_t *) &size);
++	vm_offset_t fb = (vm_offset_t)__firehose_buffer_create((size_t *) &size);
++	if (fb != 0) {
++		kernel_firehose_addr = fb;
++	}
+ 
+ 	printf("oslog_init completed, %u chunks, %u io pages\n",
+ 	    __firehose_buffer_kernel_chunk_count, __firehose_num_kernel_io_pages);
+@@ -1423,3 +1426,47 @@ find_pattern_in_buffer(const char *pattern, size_t len, size_t expected_count)
+ }
+ 
+ #endif
++
++/*
++ * SWEET: implementations for the closed-source half of the firehose buffer.
++ *
++ * xnu-7195 declares these in <os/firehose_buffer_private.h> and links Apple's
++ * implementation from a private library. There is no logd on this board, so the
++ * buffer is intentionally inert: the memory allocated by oslog_init() stays
++ * mapped (kernel_firehose_addr keeps pointing at it), no tracepoint is ever
++ * reserved, and update replies are dropped. os_log_impl() treats a NULL reserve
++ * as "no space" and falls back to firehose_boot_chunk, which is the same buffer
++ * kprintf already uses -- logging cannot wedge or panic the kernel.
++ */
++void *
++__firehose_buffer_create(size_t *size)
++{
++	(void)size;
++	return NULL;
++}
++
++firehose_tracepoint_t
++__firehose_buffer_tracepoint_reserve(__unused uint64_t stamp,
++    __unused firehose_stream_t stream, __unused uint16_t publen,
++    __unused uint16_t privlen, __unused void *priv)
++{
++	return NULL;
++}
++
++void
++__firehose_buffer_tracepoint_flush(__unused firehose_tracepoint_t ft,
++    __unused firehose_tracepoint_id_u ftid)
++{
++}
++
++void
++__firehose_merge_updates(__unused firehose_push_reply_t reply)
++{
++}
++
++bool
++__firehose_kernel_configuration_valid(__unused uint8_t chunks,
++    __unused uint8_t io_pages)
++{
++	return true;
++}
+diff --git a/libkern/os/firehose_buffer_private.h b/libkern/os/firehose_buffer_private.h
+new file mode 100644
+index 0000000..0ab1217
+--- /dev/null
++++ b/libkern/os/firehose_buffer_private.h
+@@ -0,0 +1,52 @@
++/*
++ * Minimal stand-in for Apple's internal <os/firehose_buffer_private.h>.
++ *
++ * The real header is not part of any open source drop: xnu-7195 includes it
++ * from libkern/os/log.c, bsd/kern/subr_log.c and libkern/c++/OSKext.cpp, and
++ * Apple builds it out of the internal SDK together with a closed-source buffer
++ * implementation. Everything that *is* open -- chunk layout, tracepoint types,
++ * the ring-buffer helpers in <firehose/chunk_private.h> -- lives in the tree
++ * already and is reused here unchanged.
++ *
++ * The five entry points below are implemented in bsd/kern/subr_log.c as inert
++ * stubs: on this board there is no logd to drain the buffer, so tracepoints are
++ * never reserved and replies are ignored. The boot chunk path used by kprintf
++ * logging stays fully functional.
++ */
++
++#ifndef __os_firehose_buffer_private__
++#define __os_firehose_buffer_private__
++
++#include <stdbool.h>
++#include <stddef.h>
++#include <stdint.h>
++
++#include <firehose/firehose_types_private.h>
++#include <firehose/tracepoint_private.h>
++#include <firehose/chunk_private.h>
++
++/* Values used by oslog_init()/oslogioctl(); the buffer stays unused, so these
++ * only size the allocation and the static boot buffer. */
++#define FIREHOSE_CHUNK_SIZE                             (16 * 1024)
++#define FIREHOSE_BUFFER_KERNEL_DEFAULT_CHUNK_COUNT      32
++#define FIREHOSE_BUFFER_KERNEL_DEFAULT_IO_PAGES         1
++
++__BEGIN_DECLS
++
++/* Returns the buffer to log against, or NULL to keep the caller's own. */
++void *__firehose_buffer_create(size_t *size);
++
++/* NULL means "no space": os_log_impl() then falls back to the boot chunk. */
++firehose_tracepoint_t __firehose_buffer_tracepoint_reserve(uint64_t stamp,
++    firehose_stream_t stream, uint16_t publen, uint16_t privlen, void *priv);
++
++void __firehose_buffer_tracepoint_flush(firehose_tracepoint_t ft,
++    firehose_tracepoint_id_u ftid);
++
++void __firehose_merge_updates(firehose_push_reply_t reply);
++
++bool __firehose_kernel_configuration_valid(uint8_t chunks, uint8_t io_pages);
++
++__END_DECLS
++
++#endif /* __os_firehose_buffer_private__ */

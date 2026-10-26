@@ -87,6 +87,10 @@ step "closed kernel headers"
 # the tree so the include chain stays intact (nothing is committed).
 ls -d /Library/Developer/KDKs/* 2>/dev/null || echo "no KDK installed"
 for name in firehose_buffer_private.h; do
+	if [ -e "libkern/os/$name" ]; then
+		echo "libkern/os/$name already provided by the patch series"
+		continue
+	fi
 	hit=""
 	for root in /Library/Developer/KDKs /Applications/Xcode*.app; do
 		[ -e "$root" ] || continue
@@ -96,7 +100,6 @@ for name in firehose_buffer_private.h; do
 	if [ -n "$hit" ]; then
 		cp "$hit" "libkern/os/$name"
 		echo "installed libkern/os/$name  <-  $hit"
-		echo "  (from a $(basename "$(echo "$hit" | sed 's#/System/Library.*##')") build tree)"
 	else
 		echo "MISSING $name: no copy in any KDK or Xcode tree"
 	fi
