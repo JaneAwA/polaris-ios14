@@ -8,3 +8,4 @@
 0008-sweet-polaris-machine-config-open-arm64.patch
 0009-sweet-replace-cc-kext-symbols.patch
 0010-sweet-open-pmap-residuals.patch
+0011-sweet-closed-symbol-shims.patch

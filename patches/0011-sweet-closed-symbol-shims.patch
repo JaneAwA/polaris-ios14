@@ -1,0 +1,216 @@
+diff --git a/config/MASTER.arm64.polaris b/config/MASTER.arm64.polaris
+index 485b0df..cc3ac16 100644
+--- a/config/MASTER.arm64.polaris
++++ b/config/MASTER.arm64.polaris
+@@ -37,14 +37,21 @@
+ #  Without them the tree compiles and then fails to link with 209 undefined
+ #  symbols (every pmap_*, Switch_context, kvtophys, ads_zone, ...).
+ #
+-#  `pgo` joins BSD_RELEASE for the same reason. libkern/c++/OSKext.cpp calls
+-#  __llvm_profile_get_size_for_buffer_internal() and
+-#  __llvm_profile_write_buffer_internal() unconditionally, and Apple resolves
+-#  those from the profiling runtime inside libcc_kext.a. The equivalent source
+-#  ships in this tree at bsd/pgo/profile_runtime.c but is `optional pgo`, so
+-#  without this attribute it is not compiled and the link fails. dev/debug
+-#  configurations already carry the attribute; release simply never needed it
+-#  on a platform that links cc_kext.
++#  The three BSD attributes below exist because this kernel is built with
++#  PLATFORM=MacOSX (the SDK we have), so MASTER's macOS RELEASE list -- not the
++#  iOS one -- is what gets applied. Each attribute compiles a file that macOS
++#  leaves out but whose symbols Apple's own arm64 export lists still demand:
++#
++#      quota                     bsd/vfs/vfs_quota.c   -> dqfileinit/dqget/qf_get/...
++#      config_csr                bsd/kern/kern_csr.c   -> csr_check
++#      config_user_notification  osfmk/UserNotification/KUNCUserNotifications.c -> KUNC*
++#
++#  Note that `pgo` deliberately does not appear here. bsd/pgo/profile_runtime.c
++#  only declares the two __llvm_profile_*_internal entry points; their bodies
++#  live in compiler-rt and reach Apple's kernel through libcc_kext.a, so
++#  compiling that file changes nothing. osfmk/arm64/polaris_shims.c supplies
++#  them instead, alongside the other three symbols whose only implementation is
++#  in a closed Apple component.
+ #
+ ######################################################################
+ #
+@@ -57,7 +64,7 @@
+ #  KERNEL_DEV =     [ KERNEL_BASE development mach_assert config_xnupost proc_ref_debug pgtrace ]
+ #  KERNEL_DEBUG =   [ KERNEL_BASE debug mach_assert config_xnupost config_ltable_stats config_ltable_debug config_waitq_stats config_workloop_debug config_waitq_debug pgtrace ]
+ #  BSD_BASE =       [ mach_bsd config_workqueue psynch config_proc_uuid_policy config_personas config_imageboot config_imageboot_img4 ]
+-#  BSD_RELEASE =    [ BSD_BASE no_printf_str no_kprintf_str secure_kernel pgo ]
++#  BSD_RELEASE =    [ BSD_BASE no_printf_str no_kprintf_str secure_kernel quota config_csr config_user_notification ]
+ #  BSD_DEV =        [ BSD_BASE config_netboot config_imgsrc_access config_lockerboot config_coredump pgo config_vnguard ]
+ #  BSD_DEBUG =      [ BSD_BASE config_netboot config_imgsrc_access config_lockerboot config_coredump pgo config_vnguard ]
+ #  FILESYS_BASE =   [ devfs fifo fs_compression config_protect config_mnt_rootsnap config_triggers config_fse routefs namedstreams config_dataless_files bindfs]
+diff --git a/config/Private.arm64.exports b/config/Private.arm64.exports
+index 86988ea..c46633e 100644
+--- a/config/Private.arm64.exports
++++ b/config/Private.arm64.exports
+@@ -65,12 +65,6 @@ _pgtrace_clear_probe
+ _mach_bridge_recv_timestamps
+ _mach_bridge_init_timestamp
+ _mach_bridge_set_params
+-_pmap_iommu_init
+-_pmap_iommu_iovmalloc
+-_pmap_iommu_map
+-_pmap_iommu_unmap
+-_pmap_iommu_iovmfree
+-_pmap_iommu_ioctl
+ _set_invalidate_hmac_function
+ _PE_panic_debugging_enabled
+ _register_additional_panic_data_buffer
+@@ -78,20 +72,3 @@ _apply_func_phys
+ _Switch_context
+ _gT1Sz
+ 
+-__ZN26IOUnifiedAddressTranslator10gMetaClassE
+-__ZN26IOUnifiedAddressTranslator10superClassE
+-__ZN26IOUnifiedAddressTranslator17getPageTableEntryEy
+-__ZN26IOUnifiedAddressTranslator18setClientContextIDEjb
+-__ZN26IOUnifiedAddressTranslator21removeClientContextIDEv
+-__ZN26IOUnifiedAddressTranslator19isPageFaultExpectedEyj
+-__ZN26IOUnifiedAddressTranslator22registerTaskForServiceEP4taskP9IOService
+-__ZN26IOUnifiedAddressTranslator23createMappingInApertureEjP18IOMemoryDescriptorjym
+-__ZN26IOUnifiedAddressTranslator23getTotalPageTableMemoryEv
+-__ZN26IOUnifiedAddressTranslator3mapEP11IOMemoryMapj
+-__ZN26IOUnifiedAddressTranslator5doMapEP18IOMemoryDescriptoryyj
+-__ZN26IOUnifiedAddressTranslator5unmapEP11IOMemoryMap
+-__ZN26IOUnifiedAddressTranslator7doUnmapEP18IOMemoryDescriptoryy
+-__ZN26IOUnifiedAddressTranslator8taskDiedEv
+-__ZN26IOUnifiedAddressTranslator12commitUnmapsEv
+-__ZN26IOUnifiedAddressTranslator14prepareFWUnmapEyy
+-__ZTV26IOUnifiedAddressTranslator
+diff --git a/osfmk/arm64/polaris_shims.c b/osfmk/arm64/polaris_shims.c
+new file mode 100644
+index 0000000..4e93a50
+--- /dev/null
++++ b/osfmk/arm64/polaris_shims.c
+@@ -0,0 +1,117 @@
++/*
++ * Copyright (c) 2020 Apple Inc. All rights reserved.
++ *
++ * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
++ *
++ * This file contains Original Code and/or Modifications of Original Code
++ * as defined in and that are subject to the Apple Public Source License
++ * Version 2.0 (the 'License'). You may not use this file except in
++ * compliance with the License. The rights granted to you under the License
++ * may not be used to create, or enable the creation or redistribution of,
++ * unlawful or unlicensed copies of an Apple operating system, or to
++ * circumvent, violate, or enable the circumvention or violation of, any
++ * terms of an Apple operating system software license agreement.
++ *
++ * Please obtain a copy of the License at
++ * http://www.opensource.apple.com/apsl/ and read it before using this file.
++ *
++ * The Original Code and all software distributed under the License are
++ * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
++ * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
++ * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
++ * Please see the License for the specific language governing rights and
++ * limitations under the License.
++ *
++ * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
++ */
++
++/*
++ * Symbols the open kernel references but does not contain.
++ *
++ * Once the open arm64 pmap and asm were switched on (0008) and the closed
++ * export-list entries pruned (0009, 0011), the arm64 link came down to four
++ * symbols that no shipped source defines, plus one bsd syscall whose body is
++ * compiled out on a macOS-flavoured build. None of them is reachable during
++ * early boot; each one exists so that the kernel can be linked and run at all.
++ *
++ *   ml_enable_monitor()      arm_vm_init.c:2018 calls it unconditionally. On
++ *                            Apple silicon it flips the PPL monitor on; this
++ *                            port builds with XNU_MONITOR=0, so the correct
++ *                            behaviour on a non-Apple SoC is to do nothing.
++ *
++ *   pmap_cs_allow_invalid()  vm_map.c:20183 for the cs_allow_invalid debug
++ *                            knob. The x86 pmap answers KERN_SUCCESS with the
++ *                            comment "Unsupported on this architecture", which
++ *                            is exactly this situation.
++ *
++ *   pid_hibernate()          The freezer syscall. Its only definition sits in
++ *                            bsd/vm/vm_unix.c behind #if !XNU_TARGET_OS_OSX,
++ *                            and this build is PLATFORM=MacOSX because that is
++ *                            the SDK available, so sysent refers to a symbol
++ *                            that is never compiled. Returning ENOSYS keeps
++ *                            the syscall table consistent.
++ *
++ *   __llvm_profile_*()       libkern/c++/OSKext.cpp calls both from
++ *                            OSKextGrabPgoDataLocked(). Their bodies live in
++ *                            compiler-rt and reach Apple's kernel through
++ *                            libcc_kext.a; bsd/pgo/profile_runtime.c only
++ *                            declares them. A kernel that is not built with
++ *                            -fprofile-instr-generate has no counters, so a
++ *                            zero size and a no-op write are the truthful
++ *                            answers and make kext PGO extraction report
++ *                            "nothing to hand over" instead of panicking.
++ */
++
++#include <mach/mach_types.h>
++#include <kern/kern_types.h>
++#include <sys/errno.h>
++#include <arm/machine_routines.h>
++#include <vm/pmap.h>
++
++struct proc;
++struct pid_hibernate_args;
++
++void
++ml_enable_monitor(void)
++{
++}
++
++kern_return_t
++pmap_cs_allow_invalid(__unused pmap_t pmap)
++{
++	return KERN_SUCCESS;
++}
++
++int
++pid_hibernate(struct proc *p __unused, struct pid_hibernate_args *args __unused,
++    int *ret)
++{
++	if (ret != NULL) {
++		*ret = ENOSYS;
++	}
++	return ENOSYS;
++}
++
++uint64_t
++__llvm_profile_get_size_for_buffer_internal(const char *data_begin __unused,
++    const char *data_end __unused,
++    const char *counters_begin __unused,
++    const char *counters_end __unused,
++    const char *names_begin __unused,
++    const char *names_end __unused)
++{
++	return 0;
++}
++
++int
++__llvm_profile_write_buffer_internal(char *buffer __unused,
++    const char *data_begin __unused,
++    const char *data_end __unused,
++    const char *counters_begin __unused,
++    const char *counters_end __unused,
++    const char *names_begin __unused,
++    const char *names_end __unused)
++{
++	return 0;
++}
+diff --git a/osfmk/conf/files.arm64 b/osfmk/conf/files.arm64
+index 0378298..e86ef44 100644
+--- a/osfmk/conf/files.arm64
++++ b/osfmk/conf/files.arm64
+@@ -23,6 +23,7 @@ osfmk/arm64/lz4_encode_arm64.s  standard
+ # KERNEL_INTEGRITY_KTRR or KERNEL_INTEGRITY_CTRR is defined, and every caller of
+ # rorgn_stash_range()/rorgn_lockdown() is already behind that same #if, so a
+ # non-Apple SoC loses nothing by leaving it out.
++osfmk/arm64/polaris_shims.c	standard
+ osfmk/arm64/bcopy.s standard
+ osfmk/arm64/bzero.s standard
+ osfmk/arm64/chkstk_darwin.s	standard
