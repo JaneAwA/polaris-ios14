@@ -1,0 +1,59 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+index 6a64fde..1ee5217 100644
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -183,6 +183,18 @@ extern boolean_t vm_darkwake_mode;
+ extern int bootarg_execfailurereports; /* bsd_init.c */
+ boolean_t unentitled_ios_sim_launch = FALSE;
+ 
++#if XNU_TARGET_OS_OSX
++/*
++ * SWEET (non-Apple arm64 hardware): second, independent switch that lets an
++ * iOS userland run on a macOS-config kernel in RELEASE builds.
++ *
++ * Both boot arguments must be present. A plain macOS kernel that does not set
++ * them keeps the original behaviour bit for bit, and a stray
++ * unentitled_ios_sim_launch alone still cannot open the gate.
++ */
++static boolean_t sweet_ios_userland = FALSE;
++#endif /* XNU_TARGET_OS_OSX */
++
+ #if __has_feature(ptrauth_calls) && defined(XNU_TARGET_OS_OSX)
+ static TUNABLE(bool, bootarg_arm64e_preview_abi, "-arm64e_preview_abi", false);
+ #endif /* __has_feature(ptrauth_calls) && defined(XNU_TARGET_OS_OSX) */
+@@ -6491,6 +6503,19 @@ load_init_program(proc_t p)
+ 	PE_parse_boot_argn("vm_shared_region_reslide_restrict", &vm_shared_region_reslide_restrict, sizeof(vm_shared_region_reslide_restrict));
+ #endif /* __has_feature(ptrauth_calls) */
+ 
++#if XNU_TARGET_OS_OSX
++#if !DEBUG && !DEVELOPMENT
++	/*
++	 * SWEET: RELEASE used to compile this tunable out of the kernel entirely,
++	 * which is why a RELEASE build unconditionally killed launchd with
++	 * EXEC_EXIT_REASON_WRONG_PLATFORM. Parse it in RELEASE too, together with
++	 * the dedicated sweet_ios_userland switch (fail closed by default).
++	 */
++	PE_parse_boot_argn("unentitled_ios_sim_launch", &unentitled_ios_sim_launch, sizeof(unentitled_ios_sim_launch));
++	PE_parse_boot_argn("sweet_ios_userland", &sweet_ios_userland, sizeof(sweet_ios_userland));
++#endif /* !DEBUG && !DEVELOPMENT */
++#endif /* XNU_TARGET_OS_OSX */
++
+ #if DEBUG || DEVELOPMENT
+ #if XNU_TARGET_OS_OSX
+ 	PE_parse_boot_argn("unentitled_ios_sim_launch", &unentitled_ios_sim_launch, sizeof(unentitled_ios_sim_launch));
+@@ -6930,6 +6955,15 @@ check_for_signature(proc_t p, struct image_params *imgp)
+ 				no_sandbox_entitled = IOVnodeHasEntitlement(imgp->ip_vp,
+ 				    (int64_t)imgp->ip_arch_offset, "com.apple.private.security.no-sandbox");
+ 			}
++#else /* !DEBUG && !DEVELOPMENT */
++			/*
++			 * SWEET: RELEASE gate for a non-Apple board. Requires the two boot
++			 * arguments parsed in load_init_program(); nothing else in a stock
++			 * macOS kernel sets them, so this stays fail closed.
++			 */
++			if (unentitled_ios_sim_launch && sweet_ios_userland) {
++				no_sandbox_entitled = TRUE;
++			}
+ #endif /* DEBUG || DEVELOPMENT */
+ 			if (!no_sandbox_entitled) {
+ 				signature_failure_reason = os_reason_create(OS_REASON_EXEC,

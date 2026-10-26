@@ -1,0 +1,91 @@
+name: xnu-7195
+
+# Builds the iOS 14 kernel generation (xnu-7195.141.2, Darwin 20.6) so the
+# Mi MIX 2S (polaris / SDM845) work has a real, downloadable kernel artifact
+# instead of patches nobody ever compiled.
+
+on:
+  workflow_dispatch:
+    inputs:
+      xnu_tag:
+        description: "xnu tag (xnu-7195.141.2 = iOS 14.8)"
+        default: "xnu-7195.141.2"
+      kernel_config:
+        description: "kernel config: RELEASE / DEVELOPMENT / DEBUG"
+        default: "RELEASE"
+      machine_config:
+        description: "machine config (T8010 until POLARIS lands)"
+        default: "T8010"
+      patch_set:
+        description: "series = apply patches/series, none = vanilla"
+        default: "series"
+      sdk_mode:
+        description: "host = runner SDK, macos11.3 = SDK of the same generation"
+        default: "host"
+  push:
+    branches: [main]
+    paths:
+      - "patches/**"
+      - "scripts/**"
+      - ".github/workflows/xnu.yml"
+
+concurrency:
+  group: xnu-${{ github.ref }}-${{ inputs.machine_config || 'T8010' }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 100
+    env:
+      XNU_TAG: ${{ inputs.xnu_tag || 'xnu-7195.141.2' }}
+      KERNEL_CONFIG: ${{ inputs.kernel_config || 'RELEASE' }}
+      MACHINE_CONFIG: ${{ inputs.machine_config || 'T8010' }}
+      PATCH_SET: ${{ github.event_name == 'push' && 'series' || inputs.patch_set || 'series' }}
+      SDK_MODE: ${{ inputs.sdk_mode || 'host' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        id: build
+        continue-on-error: true
+        run: bash scripts/build-xnu.sh
+
+      - name: Summarise
+        if: always()
+        run: |
+          {
+            echo "## xnu-7195 build"
+            echo ""
+            echo "| field | value |"
+            echo "|---|---|"
+            echo "| tag | \`${XNU_TAG}\` |"
+            echo "| config | \`${KERNEL_CONFIG}\` / \`ARM64\` / \`${MACHINE_CONFIG}\` |"
+            echo "| patch set | \`${PATCH_SET}\` |"
+            echo "| SDK | \`${SDK_MODE}\` |"
+            echo "| exit | \`${{ steps.build.outcome }}\` |"
+            echo "| error lines | \`$(grep -c 'error:' build.log 2>/dev/null || echo 0)\` |"
+            echo ""
+            if grep -q 'error:' build.log 2>/dev/null; then
+              echo "### First errors"
+              echo '```'
+              grep 'error:' build.log | sed 's/^.*xnu\///' | sort | uniq -c | sort -rn | head -30
+              echo '```'
+            fi
+            if ls out/kernel.* >/dev/null 2>&1; then
+              echo "### Kernels"
+              echo '```'
+              for k in out/kernel.*; do echo "$k $(stat -f%z "$k") bytes"; done
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xnu-7195-${{ inputs.machine_config || 'T8010' }}-${{ github.run_number }}
+          path: |
+            out/
+            build.log
+          if-no-files-found: warn
+          retention-days: 14
