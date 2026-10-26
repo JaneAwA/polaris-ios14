@@ -130,6 +130,15 @@ MAKE_ARGS=(
 	"TARGET_CONFIGS=${KERNEL_CONFIG} ARM64 ${MACHINE_CONFIG}"
 	"BUILD_WERROR=0" "BUILD_LTO=0" "LOGCOLORS=n" "CONCISE=0"
 	"DO_CTFMERGE=0"
+	# Makefile:237 is `CONFIG_SUBDIRS = config tools san`, and the `all` target
+	# runs config_all over it *after* the kernel links. `tools` recurses into
+	# tools/lldbmacros, which is Python 2 (print statements), so on a runner with
+	# only python3 the kernel is built successfully and then the build reports
+	# failure while installing debugger macros we never use. Dropping `tools`
+	# and `san` keeps `config`, which is what generates the symbolset and KPI
+	# lists the link itself depends on. Command-line variables win over the
+	# makefile assignment, so this is the whole fix.
+	"CONFIG_SUBDIRS=config"
 )
 
 # `LD_KERNEL_LIBS = -lcc_kext` is unconditional in MakeInc.def:784. Apple ships
@@ -178,6 +187,13 @@ find "${SRC}/BUILD" -name 'kernel.*' -type f 2>/dev/null | while read -r k; do
 	shasum -a 256 "$k"
 done
 mkdir -p "${REPO}/out"
-find "${SRC}/BUILD" -name 'kernel.*' -type f -exec cp {} "${REPO}/out/" \; 2>/dev/null
+# Skip the 82 MB object archive: it is only useful for local relinking and it
+# dominates the artifact size.
+find "${SRC}/BUILD" -name 'kernel.*' -type f ! -name '*.a' -exec cp {} "${REPO}/out/" \; 2>/dev/null
 cp "$LOG" "${REPO}/out/build.log" 2>/dev/null
+if ls "${REPO}/out"/kernel.release.* >/dev/null 2>&1; then
+	echo "KERNEL BUILT: $(cd "${REPO}/out" && ls kernel.release.* | tr '\n' ' ')"
+else
+	echo "NO KERNEL IN out/ -- see build.log"
+fi
 exit "$rc"

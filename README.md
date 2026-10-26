@@ -84,7 +84,8 @@ Boot arguments for this kernel: `unentitled_ios_sim_launch=1 sweet_ios_userland=
 | #10 | POLARIS, 0001-0009 | the open pmap/asm now actually compile, and immediately exposed three gaps, all of them "Apple never ships this source": `amcc_rorgn.c` is not in the drop at all, `start.s` includes a generated `arm64/tunables/tunables.s`, and `pmap.c:15137` uses a CDHash and lock that only the closed pmap defines. Fixed by 0010 |
 | #11 | POLARIS, 0001-0010 | **the whole tree compiles and the linker runs**: no compile errors at all. The link failed on 23 export-list entries that no shipped source defines (`_pmap_iommu_*`, the whole `IOUnifiedAddressTranslator` class) plus five symbols whose only definition is in a closed component, and on three attributes that macOS's RELEASE list omits but whose symbols Apple's arm64 export lists still demand. Fixed by 0011 |
 | #12 | POLARIS, 0001-0011 | down to a single file: `bsd/kern/kern_csr.c` does not compile because its `#else` branch reads `boot_args->flags` / `csrActiveConfig`, which exist only in `pexpert/pexpert/i386/boot.h`. `CONFIG_CSR_FROM_DT` selects the arm64 branch that reads the policy out of the device tree. Fixed by 0012 |
-| #13 | POLARIS, 0001-0012 | running |
+| #13 | POLARIS, 0001-0012 | **the kernel is built and linked**: `LD kernel.release.polaris.unstripped`, `DSYMUTIL`, `STRIP`, `built kernel at .../kernel.release.polaris`. The run still reported failure because `all` then runs `config_all` over `CONFIG_SUBDIRS = config tools san`, and `tools/lldbmacros` is Python 2 (`print helpdoc`). Fixed in the build script |
+| #14 | POLARIS, 0001-0012 + `CONFIG_SUBDIRS=config` | running |
 
 ### The 209 undefined symbols, and why they are not a porting bug
 
