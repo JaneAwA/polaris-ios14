@@ -1,0 +1,94 @@
+diff --git a/osfmk/arm/pmap.c b/osfmk/arm/pmap.c
+index 9cd9436..3bc4399 100644
+--- a/osfmk/arm/pmap.c
++++ b/osfmk/arm/pmap.c
+@@ -672,6 +672,18 @@ static struct pmap_image4_trust_cache *pmap_image4_trust_caches MARK_AS_PMAP_DAT
+ 
+ MARK_AS_PMAP_DATA SIMPLE_LOCK_DECLARE(pmap_loaded_trust_caches_lock, 0);
+ 
++/*
++ * The compilation-service CDHash and its lock are defined in the x86_64 pmap
++ * but not in the open arm64 one: Apple's arm64 build gets them from the closed
++ * pmap, so nothing in the shipped sources declares or defines them, yet
++ * pmap_set_compilation_service_cdhash_internal() and
++ * pmap_match_compilation_service_cdhash_internal() below use both. Nothing on
++ * this platform calls those two functions, so a zero-filled array and an
++ * ordinary simple lock reproduce the reference behaviour exactly.
++ */
++MARK_AS_PMAP_DATA SIMPLE_LOCK_DECLARE(pmap_compilation_service_cdhash_lock, 0);
++static uint8_t pmap_compilation_service_cdhash[CS_CDHASH_LEN] MARK_AS_PMAP_DATA = { 0 };
++
+ 
+ /*
+  * Represents a tlb range that will be flushed before exiting
+diff --git a/osfmk/arm64/tunables/tunables.s b/osfmk/arm64/tunables/tunables.s
+new file mode 100644
+index 0000000..ad90f0d
+--- /dev/null
++++ b/osfmk/arm64/tunables/tunables.s
+@@ -0,0 +1,49 @@
++/*
++ * Copyright (c) 2020 Apple Inc. All rights reserved.
++ *
++ * @APPLE_OSREFERENCE_LICENSE_HEADER_START@
++ *
++ * This file contains Original Code and/or Modifications of Original Code
++ * as defined in and that are subject to the Apple Public Source License
++ * Version 2.0 (the 'License'). You may not use this file except in
++ * compliance with the License. The rights granted to you under the License
++ * may not be used to create, or enable the creation or redistribution of,
++ * unlawful or unlicensed copies of an Apple operating system, or to
++ * circumvent, violate, or enable the circumvention or violation of, any
++ * terms of an Apple operating system software license agreement.
++ *
++ * Please obtain a copy of the License at
++ * http://www.opensource.apple.com/apsl/ and read it before using this file.
++ *
++ * The Original Code and all software distributed under the License are
++ * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
++ * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
++ * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
++ * Please see the License for the specific language governing rights and
++ * limitations under the License.
++ *
++ * @APPLE_OSREFERENCE_LICENSE_HEADER_END@
++ */
++
++/*
++ * <arm64/tunables/tunables.s> does not exist in the open source drop. Apple
++ * generates it per SoC to apply MIDR-matched register tweaks very early in
++ * start.s (uncore HID/CYC/PMCR settings that only exist on Apple silicon).
++ * start.s uses exactly one thing from it:
++ *
++ *     APPLY_TUNABLES x12, x13
++ *
++ * which is an assembler macro invoked with space-separated arguments, not a cpp
++ * macro -- there are no parentheses. The real file's body is a sequence of
++ * mrs/msr pairs matched against the MIDR; on a non-Apple part there is nothing
++ * to match, so the body stays empty while the signature keeps start.s
++ * source-identical to Apple's.
++ */
++#ifndef __arm64_tunables_tunables_s__
++#define __arm64_tunables_tunables_s__
++
++	.macro APPLY_TUNABLES midr_reg, scratch_reg
++	.endmacro
++
++#endif /* __arm64_tunables_tunables_s__ */
+diff --git a/osfmk/conf/files.arm64 b/osfmk/conf/files.arm64
+index b86d410..0378298 100644
+--- a/osfmk/conf/files.arm64
++++ b/osfmk/conf/files.arm64
+@@ -19,7 +19,10 @@ osfmk/arm64/WKdmCompress_4k.s	standard
+ osfmk/arm64/WKdmData.s		standard
+ osfmk/arm64/lz4_decode_arm64.s  standard
+ osfmk/arm64/lz4_encode_arm64.s  standard
+-osfmk/arm64/amcc_rorgn.c optional nos_arm_asm
++# amcc_rorgn.c is not part of the open drop. It is only compiled when
++# KERNEL_INTEGRITY_KTRR or KERNEL_INTEGRITY_CTRR is defined, and every caller of
++# rorgn_stash_range()/rorgn_lockdown() is already behind that same #if, so a
++# non-Apple SoC loses nothing by leaving it out.
+ osfmk/arm64/bcopy.s standard
+ osfmk/arm64/bzero.s standard
+ osfmk/arm64/chkstk_darwin.s	standard

@@ -59,7 +59,7 @@ Boot arguments for this kernel: `unentitled_ios_sim_launch=1 sweet_ios_userland=
 
 | item | state |
 |---|---|
-| xnu-7195.141.2 configures, compiles and links on a modern runner | compiles in full (run #8 compiled the whole tree); the link exposed 209 undefined symbols, all of them answers to "this is not an Apple platform" -- 0008 and 0009 close them, run #10 verifying |
+| xnu-7195.141.2 configures, compiles and links on a modern runner | the whole tree compiled by run #8; run #9 reached the link (209 undefined symbols); run #10 turned the open pmap/asm on and found three missing non-Apple sources, fixed by 0010; run #11 verifying |
 | launchd platform gate | patched (0001) |
 | POLARIS machine config (SDM845, GICv3 Group 1, 16K pages) | written (0003/0004) |
 | UFS / HFS+ root | not ported |
@@ -81,7 +81,8 @@ Boot arguments for this kernel: `unentitled_ios_sim_launch=1 sweet_ios_userland=
 | #7 | POLARIS, 0001-0006 | died in the patch check, not the build: 0006 had been produced with plain `diff -u` on a CRLF checkout, so a mixed-CR patch passed on the authoring machine and failed on the runner. Regenerated as a `git diff` on an LF tree; the script now refuses patches containing CR bytes |
 | #8 | POLARIS, 0001-0006 (LF) | patches accepted, ~11 min of real compilation, then **exactly one** genuine error: `bsd/kern/subr_log.c:77 'os/firehose_buffer_private.h' file not found`. The header exists in the tree, but bsd compiles against `BUILD/obj/EXPORT_HDRS/libkern/`, and 0005 never added the file to `libkern/os/Makefile`'s `EXPORT_MI_LIST`. Fixed by 0007. The other 1776 `error:` lines were `xcrun -find ctfconvert/ctfmerge/ctf_insert/scan-build` probes failing on every sub-make, since Xcode 15 dropped those tools; the build script now seeds them and passes `DO_CTFMERGE=0` |
 | #9 | POLARIS, 0001-0007 | the header is gone, the whole tree compiles, and the link ran for the first time: 209 undefined symbols, no compile errors. Two causes, both fixed by 0008/0009 (see below) |
-| #10 | POLARIS, 0001-0009 | running |
+| #10 | POLARIS, 0001-0009 | the open pmap/asm now actually compile, and immediately exposed three gaps, all of them "Apple never ships this source": `amcc_rorgn.c` is not in the drop at all, `start.s` includes a generated `arm64/tunables/tunables.s`, and `pmap.c:15137` uses a CDHash and lock that only the closed pmap defines. Fixed by 0010 |
+| #11 | POLARIS, 0001-0010 | running |
 
 ### The 209 undefined symbols, and why they are not a porting bug
 
@@ -166,6 +167,7 @@ Applied in the order listed in `patches/series`:
 | `0007-sweet-export-firehose-header` | adds `firehose_buffer_private.h` to `EXPORT_MI_LIST` in `libkern/os/Makefile` | `bsd` compiles with `-I BUILD/obj/EXPORT_HDRS/libkern`, not the source tree, so a header that only exists in `libkern/os/` is invisible to `bsd/kern/subr_log.c` |
 | `0008-sweet-polaris-machine-config-open-arm64` | `config/MASTER.arm64.polaris`: defines `ARM_EXTRAS_BASE = [ nos_arm_pmap nos_arm_asm ]` and adds `pgo` to `BSD_RELEASE` | without the first attribute the open pmap/asm are not compiled at all (192 undefined symbols); without the second `bsd/pgo/profile_runtime.c` is not compiled and the two `__llvm_profile_*_internal` calls from `OSKext.cpp` are unresolved |
 | `0009-sweet-replace-cc-kext-symbols` | new `osfmk/arm64/chkstk_darwin.s` plus its `files.arm64` entry, and five IOMMU KPIs removed from `config/Private.arm64.exports` | `___chkstk_darwin` lives in `libcc_kext.a` (KDK only) and is called from kernel prologues; the five KPIs are defined only by Apple's closed IOMMU drivers, so demanding them in the export list guarantees a link failure |
+| `0010-sweet-open-pmap-residuals` | drops the `amcc_rorgn.c` entry from `files.arm64`, adds `osfmk/arm64/tunables/tunables.s` with an empty `APPLY_TUNABLES` assembler macro, and defines the compilation-service CDHash plus its simple lock in `osfmk/arm/pmap.c` | the three things the open arm64 port has never needed to compile before: `amcc_rorgn.c` is absent from the drop (only its header ships, and it is KTRR/CTRR-only), `start.s` line 35 includes a per-SoC generated file, and the CDHash globals live in Apple's closed pmap. Every caller of `rorgn_*` is already inside `#if KERNEL_INTEGRITY_KTRR || KERNEL_INTEGRITY_CTRR`, which POLARIS does not define |
 
 93 patches exist in the iOS 16 tree. Checked one by one against 7195.141.2 with
 `git apply --check`: 13 apply unchanged, 80 need rewriting. This repository only
