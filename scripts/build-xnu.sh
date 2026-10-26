@@ -79,6 +79,29 @@ else
 	echo "patch set disabled (PATCH_SET=${PATCH_SET})"
 fi
 
+step "closed kernel headers"
+# xnu-7195 includes <os/firehose_buffer_private.h>, which is not part of the
+# public macOS SDK: Apple's own builds get it from the internal SDK. The runner
+# image ships Kernel Debug Kits, whose PrivateHeaders carry the same family of
+# headers. Report what is available, and install the exact missing header into
+# the tree so the include chain stays intact (nothing is committed).
+ls -d /Library/Developer/KDKs/* 2>/dev/null || echo "no KDK installed"
+for name in firehose_buffer_private.h; do
+	hit=""
+	for root in /Library/Developer/KDKs /Applications/Xcode*.app; do
+		[ -e "$root" ] || continue
+		hit=$(find "$root" -name "$name" -path '*PrivateHeaders*' 2>/dev/null | head -1)
+		[ -n "$hit" ] && break
+	done
+	if [ -n "$hit" ]; then
+		cp "$hit" "libkern/os/$name"
+		echo "installed libkern/os/$name  <-  $hit"
+		echo "  (from a $(basename "$(echo "$hit" | sed 's#/System/Library.*##')") build tree)"
+	else
+		echo "MISSING $name: no copy in any KDK or Xcode tree"
+	fi
+done
+
 step "make TARGET_CONFIGS=\"${KERNEL_CONFIG} ARM64 ${MACHINE_CONFIG}\" -j${JOBS}"
 MAKE_ARGS=(
 	install -j"${JOBS}" -k

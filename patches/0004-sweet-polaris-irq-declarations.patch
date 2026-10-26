@@ -1,0 +1,25 @@
+diff --git a/osfmk/arm/proc_reg.h b/osfmk/arm/proc_reg.h
+index d599007..28dfc1e 100644
+--- a/osfmk/arm/proc_reg.h
++++ b/osfmk/arm/proc_reg.h
+@@ -266,7 +266,7 @@
+ 
+ #define DFSR_WRITE     0x00000800 /* write data abort fault */
+ 
+-#if defined (ARMA7) || defined (APPLE_ARM64_ARCH_FAMILY) || defined (BCM2837)
++#if defined (ARMA7) || defined (APPLE_ARM64_ARCH_FAMILY) || defined (BCM2837) || defined (POLARIS)
+ 
+ #define TEST_FSR_VMFAULT(status) \
+ 	(((status) == FSR_PFAULT)     \
+diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
+index 31d5c8e..de36404 100644
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -29,6 +29,7 @@
+ #include <arm/caches_internal.h>
+ #include <arm/cpu_data.h>
+ #include <arm/cpu_data_internal.h>
++#include <arm/machine_cpu.h>
+ #include <arm/misc_protos.h>
+ #include <arm/thread.h>
+ #include <arm/rtclock.h>
