@@ -1,0 +1,115 @@
+diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
+index f783e75..c305d51 100644
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -451,6 +451,31 @@ start_cpu:
+ 	.globl EXT(start_first_cpu)
+ LEXT(start_first_cpu)
+ 
++	/*
++	 * POLARIS bring-up probe #1.
++	 *
++	 * There is no debug UART on SDM845 and no console this early, and every
++	 * early fault spins forever in LowExceptionVectorBase, so a silent hang
++	 * looks exactly like a dead kernel.  Paint a green block straight into
++	 * the physical splash framebuffer while the MMU is still off (the loader
++	 * runs identity-mapped), which is the only proof we can get that the
++	 * kernel executed its first instruction.
++	 */
++	movz	x9, #0x9d40, lsl #16			// splash framebuffer, physical
++	movz	w10, #0xff00
++	movk	w10, #0xff00, lsl #16			// opaque green
++	mov	x11, #120				// 120 scanlines
++Lpolaris_probe1_row:
++	mov	x12, #240				// 240 pixels each
++Lpolaris_probe1_col:
++	str	w10, [x9], #4
++	subs	x12, x12, #1
++	b.ne	Lpolaris_probe1_col
++	add	x9, x9, #(4320 - 960)			// skip the rest of the line
++	subs	x11, x11, #1
++	b.ne	Lpolaris_probe1_row
++	dsb	sy
++
+ 	// Unlock the core for debugging
+ 	msr		OSLAR_EL1, xzr
+ 	msr		DAIFSet, #(DAIFSC_ALL)				// Disable all interrupts
+@@ -471,6 +496,28 @@ LEXT(start_first_cpu)
+ 	adrp	x25, EXT(bootstrap_pagetables)@page	// Get the start of the page tables
+ 	ldr		x26, [x20, BA_BOOT_FLAGS]			// Get the kernel boot flags
+ 
++	/*
++	 * POLARIS bring-up probe #2: the boot_args block was readable, so the
++	 * pointer the loader handed us and the fields the bootstrap needs are
++	 * sane.  Magenta block just below probe #1, still MMU off.
++	 */
++	movz	x9, #0x9d40, lsl #16
++	movz	x13, #0x7e90, lsl #4			// 120 * 4320 = 0x7e900
++	add	x9, x9, x13
++	movz	w10, #0x00ff
++	movk	w10, #0xffff, lsl #16			// opaque magenta
++	mov	x11, #120
++Lpolaris_probe2_row:
++	mov	x12, #240
++Lpolaris_probe2_col:
++	str	w10, [x9], #4
++	subs	x12, x12, #1
++	b.ne	Lpolaris_probe2_col
++	add	x9, x9, #(4320 - 960)
++	subs	x11, x11, #1
++	b.ne	Lpolaris_probe2_row
++	dsb	sy
++
+ 	// Clear the register that will be used to store the userspace thread pointer and CPU number.
+ 	// We may not actually be booting from ordinal CPU 0, so this register will be updated
+ 	// in ml_parse_cpu_topology(), which happens later in bootstrap.
+diff --git a/osfmk/console/serial_console.c b/osfmk/console/serial_console.c
+index 980a781..2d51117 100644
+--- a/osfmk/console/serial_console.c
++++ b/osfmk/console/serial_console.c
+@@ -136,10 +136,23 @@ SECURITY_READ_ONLY_EARLY(struct console_ops) cons_ops[] = {
+ 
+ SECURITY_READ_ONLY_EARLY(uint32_t) nconsops = (sizeof cons_ops / sizeof cons_ops[0]);
+ 
++/*
++ * POLARIS: start on the serial console, not the video console.
++ *
++ * Apple's default is VC_CONS_OPS because real hardware has an IOFramebuffer
++ * and a window server.  This port has neither: PE_kputc is latched to
++ * cnputc_unbuffered before any serial device is registered, so every early
++ * printf/panic lands in cons_ops[cons_ops_index].putc.  With the default
++ * that is vcputc, which needs a video console that will never be probed --
++ * the whole boot log is dropped into an empty pipe.
++ *
++ * cons_ops[0] is _serial_putc, which walks the pe_serial_functions list that
++ * the POLARIS framebuffer console registers itself on.
++ */
+ #if __x86_64__
+-uint32_t cons_ops_index = VC_CONS_OPS;
++uint32_t cons_ops_index = SERIAL_CONS_OPS;
+ #else
+-SECURITY_READ_ONLY_LATE(uint32_t) cons_ops_index = VC_CONS_OPS;
++SECURITY_READ_ONLY_LATE(uint32_t) cons_ops_index = SERIAL_CONS_OPS;
+ #endif
+ 
+ LCK_GRP_DECLARE(console_lck_grp, "console");
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+index 4ba8493..d9a1fd9 100644
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -925,6 +925,15 @@ fbcon_init(void)
+ 	for (uint32_t r = 0; r < fbcon_rows; r++) {
+ 		fbcon_clear_row(r);
+ 	}
++	/*
++	 * Self-test that does not go through kprintf at all.  If the mapping or
++	 * the glyph blit is wrong this line is still the first thing that has to
++	 * appear, so its absence is itself the diagnosis.
++	 */
++	for (const char *m = "FBCON POLARIS 1080x2160"; *m != '\0'; m++) {
++		fbcon_draw(*m);
++	}
++	fbcon_newline();
+ }
+ 
+ static void

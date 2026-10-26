@@ -12,3 +12,4 @@
 0012-sweet-csr-from-device-tree.patch
 0013-sweet-skip-python2-lldbmacros.patch
 0014-sweet-polaris-fbcon.patch
+0015-polaris-early-probe.patch
