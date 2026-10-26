@@ -1,0 +1,113 @@
+diff --git a/config/Private.arm64.exports b/config/Private.arm64.exports
+index 09e5a5d..86988ea 100644
+--- a/config/Private.arm64.exports
++++ b/config/Private.arm64.exports
+@@ -71,11 +71,6 @@ _pmap_iommu_map
+ _pmap_iommu_unmap
+ _pmap_iommu_iovmfree
+ _pmap_iommu_ioctl
+-_nvme_ppl_get_desc
+-_sart_get_desc
+-_t8020dart_get_desc
+-_t8020dart_vo_tte
+-_uat_get_desc
+ _set_invalidate_hmac_function
+ _PE_panic_debugging_enabled
+ _register_additional_panic_data_buffer
+diff --git a/osfmk/arm64/chkstk_darwin.s b/osfmk/arm64/chkstk_darwin.s
+new file mode 100644
+index 0000000..5c5199a
+--- /dev/null
++++ b/osfmk/arm64/chkstk_darwin.s
+@@ -0,0 +1,79 @@
++/*
++ * Copyright (c) 2026 The polaris-ios14 authors. All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
++ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
++ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
++ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
++ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
++ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++ * SUCH DAMAGE.
++ */
++
++/*
++ * ___chkstk_darwin
++ *
++ * Stack probe for large frames. clang emits a call to this from a function
++ * prologue when `sub sp, sp, #imm` would move sp by more than a page, so that
++ * every page in the new range is touched in order instead of striding over the
++ * guard page. It does *not* move sp; the caller does that itself once the
++ * range has been probed.
++ *
++ * Darwin arm64 convention (the same one libsystem_platform implements for user
++ * space, and the one clang emits against):
++ *
++ *      mov     x9, #frame_size        // bytes that are about to be allocated
++ *      bl      ___chkstk_darwin
++ *
++ * Clobbers x10 and x11 only. This implementation additionally leaves x9 intact
++ * -- libsystem_platform destroys it, which is legal because nothing may read it
++ * back -- so callers that re-use x9 for the final `sub sp, sp, x9` work
++ * unchanged.
++ *
++ * Why this file exists at all: Apple's kernel resolves the symbol from
++ * libcc_kext.a, which ships only inside a Kernel Debug Kit. Nothing in the open
++ * xnu tree provides it, so a build against the public SDK links everything and
++ * then dies with
++ *
++ *      "___chkstk_darwin", referenced from:
++ *          _kern_coredump_routine in processor_core.o
++ *          _exception_deliver in exception.o
++ *          _handle_kernel_breakpoint in sleh.o
++ *          ...
++ *
++ * Probing in 4 KiB steps is deliberate: it is what libsystem_platform does, and
++ * on this platform (16 KiB kernel pages) stepping at 4 KiB simply touches each
++ * page more than once, never fewer.
++ */
++
++	.text
++	.p2align 2
++	.globl	___chkstk_darwin
++___chkstk_darwin:
++	mov	x10, sp			// x10 walks down the range
++	mov	x11, x9			// x11 = bytes still unprobed
++1:
++	subs	x11, x11, #4096
++	b.lo	2f			// less than a page left
++	sub	x10, x10, #4096
++	ldr	xzr, [x10]		// touch, faulting on the guard page if we
++					// ran past the bottom of the stack
++	b	1b
++2:
++	add	x11, x11, #4096		// x11 is now 0..4095
++	sub	x10, x10, x11
++	ldr	xzr, [x10]		// touch the lowest address of the frame
++	ret
+diff --git a/osfmk/conf/files.arm64 b/osfmk/conf/files.arm64
+index 4f861af..b86d410 100644
+--- a/osfmk/conf/files.arm64
++++ b/osfmk/conf/files.arm64
+@@ -22,6 +22,7 @@ osfmk/arm64/lz4_encode_arm64.s  standard
+ osfmk/arm64/amcc_rorgn.c optional nos_arm_asm
+ osfmk/arm64/bcopy.s standard
+ osfmk/arm64/bzero.s standard
++osfmk/arm64/chkstk_darwin.s	standard
+ osfmk/arm/caches.c		standard
+ osfmk/arm64/caches_asm.s		standard
+ osfmk/arm64/copyio.c	standard

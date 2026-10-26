@@ -5,3 +5,5 @@
 0005-sweet-firehose-buffer-stub.patch
 0006-sweet-link-without-kdk-firehose-archive.patch
 0007-sweet-export-firehose-header.patch
+0008-sweet-polaris-machine-config-open-arm64.patch
+0009-sweet-replace-cc-kext-symbols.patch
