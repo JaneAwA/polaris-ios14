@@ -14,8 +14,8 @@ on:
         description: "kernel config: RELEASE / DEVELOPMENT / DEBUG"
         default: "RELEASE"
       machine_config:
-        description: "machine config (T8010 until POLARIS lands)"
-        default: "T8010"
+        description: "machine config: POLARIS (SDM845) or a stock one"
+        default: "POLARIS"
       patch_set:
         description: "series = apply patches/series, none = vanilla"
         default: "series"
@@ -30,7 +30,7 @@ on:
       - ".github/workflows/xnu.yml"
 
 concurrency:
-  group: xnu-${{ github.ref }}-${{ inputs.machine_config || 'T8010' }}
+  group: xnu-${{ github.ref }}-${{ inputs.machine_config || 'POLARIS' }}
   cancel-in-progress: true
 
 jobs:
@@ -40,7 +40,7 @@ jobs:
     env:
       XNU_TAG: ${{ inputs.xnu_tag || 'xnu-7195.141.2' }}
       KERNEL_CONFIG: ${{ inputs.kernel_config || 'RELEASE' }}
-      MACHINE_CONFIG: ${{ inputs.machine_config || 'T8010' }}
+      MACHINE_CONFIG: ${{ inputs.machine_config || 'POLARIS' }}
       PATCH_SET: ${{ github.event_name == 'push' && 'series' || inputs.patch_set || 'series' }}
       SDK_MODE: ${{ inputs.sdk_mode || 'host' }}
     steps:
@@ -89,7 +89,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: xnu-7195-${{ inputs.machine_config || 'T8010' }}-${{ github.run_number }}
+          name: xnu-7195-${{ inputs.machine_config || 'POLARIS' }}-${{ github.run_number }}
           path: |
             out/
             build.log

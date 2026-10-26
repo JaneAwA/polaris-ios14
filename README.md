@@ -59,18 +59,29 @@ Boot arguments for this kernel: `unentitled_ios_sim_launch=1 sweet_ios_userland=
 
 | item | state |
 |---|---|
-| xnu-7195.141.2 compiles on a modern runner | **being measured** (see Actions) |
+| xnu-7195.141.2 compiles on a modern runner | build_setup fixed (0002); full kernel build running in Actions |
 | launchd platform gate | patched (0001) |
-| POLARIS machine config | not yet — 8796 version needs a port to 7195's `MACHINE_CONFIGS` scheme |
+| POLARIS machine config (SDM845, GICv3 Group 1, 16K pages) | written (0003), compile being verified |
 | UFS / HFS+ root | not ported |
 | IOMobileFramebuffer / IOSurface | not ported |
 | IOHID (touch / keys) | not ported |
 | userspace root image | not started; iOS 14 has no cryptex/preboot split, so the root is one HFS+ volume built offline |
 | flashable image | **no** |
 
+## Patch series
+
+Applied in the order listed in `patches/series`:
+
+| patch | what it does | why |
+|---|---|---|
+| `0001-sweet-ios14-launchd-platform-optin` | parses `unentitled_ios_sim_launch` in RELEASE behind a second switch | without it launchd dies at `EXEC_EXIT_REASON_WRONG_PLATFORM` |
+| `0002-sweet-build-symbol-aliasing-without-availability-pl` | `bsd/sys/make_symbol_aliasing.sh` falls back to a built-in release table | macOS 14.5 SDK dropped `usr/local/libexec/availability.pl`; `build_setup` died before any compile |
+| `0003-sweet-polaris-machine-config` | `MACHINE_CONFIGS=POLARIS`: machine flags, `POLARIS.h`, board config, cache lines, GIC Group 1 setup, Group 1 IRQ routing in `sleh_irq` | this is what makes the kernel target SDM845 instead of an Apple SoC |
+
 93 patches exist in the iOS 16 tree. Checked one by one against 7195.141.2 with
 `git apply --check`: 13 apply unchanged, 80 need rewriting. This repository only
 ever contains patches that have been verified against this exact tag.
+
 
 ## Build
 
