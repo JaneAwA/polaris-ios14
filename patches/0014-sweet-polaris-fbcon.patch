@@ -1,0 +1,225 @@
+diff --git a/osfmk/conf/files b/osfmk/conf/files
+index a7e18d8..74faefd 100644
+--- a/osfmk/conf/files
++++ b/osfmk/conf/files
+@@ -327,6 +327,7 @@ osfmk/kern/kern_monotonic.c optional monotonic
+ 
+ osfmk/console/serial_general.c	standard
+ osfmk/console/serial_console.c	optional	serial_console
++osfmk/console/iso_font.c	optional	serial_console
+ osfmk/console/video_scroll.c	optional	video_console
+ osfmk/console/video_console.c	optional	video_console
+ 
+diff --git a/pexpert/arm/pe_kprintf.c b/pexpert/arm/pe_kprintf.c
+index 8475cd6..7ca7579 100644
+--- a/pexpert/arm/pe_kprintf.c
++++ b/pexpert/arm/pe_kprintf.c
+@@ -45,6 +45,15 @@ PE_init_kprintf(void)
+ 	if (PE_parse_boot_argn("-enable_kprintf_spam", &enable_kprintf_spam, sizeof(enable_kprintf_spam))) {
+ 		disable_kprintf_output = FALSE;
+ 	}
++#else
++	/*
++	 * RELEASE kernels ship with kprintf() muted. Bring-up needs the boot
++	 * log, so let an explicit -v turn it back on without a second build.
++	 */
++	if (PE_parse_boot_argn("-v", NULL, 0)) {
++		disable_serial_output = FALSE;
++		disable_kprintf_output = FALSE;
++	}
+ #endif
+ 
+ 	if (serial_init()) {
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+index 3a705d3..d7e795a 100644
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -809,6 +809,179 @@ SECURITY_READ_ONLY_LATE(static struct pe_serial_functions) vmapple_uart_serial_f
+ 
+ /*****************************************************************************/
+ 
++static void register_serial_functions(struct pe_serial_functions *fns);
++
++/*
++ * POLARIS (Xiaomi Mi MIX 2S / SDM845) framebuffer "serial".
++ *
++ * This board has no usable debug UART, so panic()/printf() output is drawn
++ * straight onto the ABL splash framebuffer the bootloader leaves scanning
++ * out. The geometry is the one the EL1 shim packs into boot_args and draws
++ * its own progress text with, so kernel output appears exactly where the
++ * shim's text was.
++ *
++ * Output is scaled 2x from the 8x16 ISO font so it stays readable on a
++ * 1080x2160 panel. Lines wrap back to the top: the newest text is always
++ * the line after the last blank row.
++ */
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++
++#define FBCON_BASE      0x9d400000UL    /* cont_splash_region */
++#define FBCON_WIDTH     1080u
++#define FBCON_HEIGHT    2160u
++#define FBCON_STRIDE    4320u           /* 1080 * 4, a8r8g8b8 */
++#define FBCON_SCALE     2u
++#define FBCON_FG        0xffffffffu
++#define FBCON_BG        0xff000000u
++
++extern unsigned char iso_font[256 * 16];
++extern boolean_t pmap_initialized;      /* osfmk/arm/pmap.c */
++
++static volatile uint32_t *fbcon_base;
++static uint32_t fbcon_col, fbcon_row, fbcon_cols, fbcon_rows, fbcon_words;
++static int fbcon_registered;
++
++static void
++fbcon_clear_row(uint32_t row)
++{
++	for (uint32_t y = row * 16 * FBCON_SCALE; y < (row + 1) * 16 * FBCON_SCALE; y++) {
++		volatile uint32_t *line = fbcon_base + y * fbcon_words;
++		for (uint32_t x = 0; x < FBCON_WIDTH; x++) {
++			line[x] = FBCON_BG;
++		}
++	}
++}
++
++static void
++fbcon_newline(void)
++{
++	fbcon_col = 0;
++	fbcon_row = (fbcon_row + 1) % fbcon_rows;
++	fbcon_clear_row(fbcon_row);
++	fbcon_clear_row((fbcon_row + 1) % fbcon_rows);
++}
++
++static void
++fbcon_draw(int c)
++{
++	if (fbcon_base == NULL) {
++		return;
++	}
++	if (c == '\r') {
++		fbcon_col = 0;
++		return;
++	}
++	if (c == '\n') {
++		fbcon_newline();
++		return;
++	}
++	if (c == '\t') {
++		for (int i = 0; i < 8; i++) {
++			fbcon_draw(' ');
++		}
++		return;
++	}
++	if (fbcon_col >= fbcon_cols) {
++		fbcon_newline();
++	}
++	const unsigned char *glyph = iso_font + ((unsigned char)c) * 16;
++	uint32_t x0 = fbcon_col * 8 * FBCON_SCALE;
++	uint32_t y0 = fbcon_row * 16 * FBCON_SCALE;
++	for (uint32_t gy = 0; gy < 16; gy++) {
++		for (uint32_t sy = 0; sy < FBCON_SCALE; sy++) {
++			volatile uint32_t *line =
++			    fbcon_base + (y0 + gy * FBCON_SCALE + sy) * fbcon_words + x0;
++			for (uint32_t gx = 0; gx < 8; gx++) {
++				uint32_t px = (glyph[gy] & (1u << gx)) ? FBCON_FG : FBCON_BG;
++				for (uint32_t sx = 0; sx < FBCON_SCALE; sx++) {
++					line[gx * FBCON_SCALE + sx] = px;
++				}
++			}
++		}
++	}
++	fbcon_col++;
++}
++
++static void
++fbcon_init(void)
++{
++	if (fbcon_base != NULL || !pmap_initialized) {
++		return;
++	}
++	/* The mapping has to wait for pmap_init; serial_init() runs again later. */
++	vm_offset_t va = ml_io_map_wcomb((vm_offset_t)FBCON_BASE, FBCON_HEIGHT * FBCON_STRIDE);
++	if (va == 0) {
++		return;
++	}
++	fbcon_base = (volatile uint32_t *)va;
++	fbcon_words = FBCON_STRIDE / 4;
++	fbcon_cols = FBCON_WIDTH / (8 * FBCON_SCALE);
++	fbcon_rows = FBCON_HEIGHT / (16 * FBCON_SCALE);
++	fbcon_col = fbcon_row = 0;
++	for (uint32_t r = 0; r < fbcon_rows; r++) {
++		fbcon_clear_row(r);
++	}
++}
++
++static void
++fbcon_set_baud_rate(__unused int unit, __unused uint32_t baud_rate)
++{
++}
++
++static int
++fbcon_ready(void)
++{
++	return 1;
++}
++
++static void
++fbcon_putc(int c)
++{
++	fbcon_draw(c);
++}
++
++static int
++fbcon_no_data(void)
++{
++	return 0;
++}
++
++static int
++fbcon_no_read(void)
++{
++	return 0;
++}
++
++static struct pe_serial_functions polaris_fbcon_functions = {
++	.uart_init = fbcon_init,
++	.uart_set_baud_rate = fbcon_set_baud_rate,
++	.tr0 = fbcon_ready,
++	.td0 = fbcon_putc,
++	.rr0 = fbcon_no_data,
++	.rd0 = fbcon_no_read,
++};
++
++static void
++fbcon_probe(void)
++{
++	if (fbcon_registered) {
++		return;
++	}
++	fbcon_registered = 1;
++	register_serial_functions(&polaris_fbcon_functions);
++}
++
++#else /* !ARM64_BOARD_CONFIG_POLARIS */
++
++static void
++fbcon_probe(void)
++{
++}
++
++#endif /* ARM64_BOARD_CONFIG_POLARIS */
++
++/*****************************************************************************/
++
+ static void
+ register_serial_functions(struct pe_serial_functions *fns)
+ {
+@@ -829,6 +1002,8 @@ serial_init(void)
+ 
+ 	struct pe_serial_functions *fns = gPESF;
+ 
++	fbcon_probe();
++
+ 	if (uart_initted) {
+ 		while (fns != NULL) {
+ 			fns->uart_init();
