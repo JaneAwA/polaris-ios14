@@ -1,5 +1,5 @@
 diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
-index f783e75..c305d51 100644
+index f783e75..f5c36ce 100644
 --- a/osfmk/arm64/start.s
 +++ b/osfmk/arm64/start.s
 @@ -451,6 +451,31 @@ start_cpu:
@@ -34,7 +34,7 @@ index f783e75..c305d51 100644
  	// Unlock the core for debugging
  	msr		OSLAR_EL1, xzr
  	msr		DAIFSet, #(DAIFSC_ALL)				// Disable all interrupts
-@@ -471,6 +496,28 @@ LEXT(start_first_cpu)
+@@ -471,6 +496,29 @@ LEXT(start_first_cpu)
  	adrp	x25, EXT(bootstrap_pagetables)@page	// Get the start of the page tables
  	ldr		x26, [x20, BA_BOOT_FLAGS]			// Get the kernel boot flags
  
@@ -44,7 +44,8 @@ index f783e75..c305d51 100644
 +	 * sane.  Magenta block just below probe #1, still MMU off.
 +	 */
 +	movz	x9, #0x9d40, lsl #16
-+	movz	x13, #0x7e90, lsl #4			// 120 * 4320 = 0x7e900
++	movz	x13, #0x7e9
++	add	x9, x9, x13, lsl #8			// 120 * 4320 = 0x7e900
 +	add	x9, x9, x13
 +	movz	w10, #0x00ff
 +	movk	w10, #0xffff, lsl #16			// opaque magenta
