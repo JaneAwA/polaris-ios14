@@ -79,7 +79,8 @@ Boot arguments for this kernel: `unentitled_ios_sim_launch=1 sweet_ios_userland=
 | #5 | POLARIS, 0001-0005 | cancelled: that revision of 0005 still left `FIREHOSE_BUFFER_KERNEL_CHUNK_COUNT` (used by `log.c:702`) undefined and redefined `FIREHOSE_CHUNK_SIZE` to a value chunk helpers do not use. Fixed before pushing, see below |
 | #6 | POLARIS, 0001-0005 (corrected) | cancelled before it reached the link: `LD_KERNEL_ARCHIVES` still carried `-lfirehose_kernel`, and `libfirehose_kernel.a` exists only inside a KDK. Fixed by 0006 |
 | #7 | POLARIS, 0001-0006 | died in the patch check, not the build: 0006 had been produced with plain `diff -u` on a CRLF checkout, so a mixed-CR patch passed on the authoring machine and failed on the runner. Regenerated as a `git diff` on an LF tree; the script now refuses patches containing CR bytes |
-| #8 | POLARIS, 0001-0006 (LF) | running |
+| #8 | POLARIS, 0001-0006 (LF) | patches accepted, ~11 min of real compilation, then **exactly one** genuine error: `bsd/kern/subr_log.c:77 'os/firehose_buffer_private.h' file not found`. The header exists in the tree, but bsd compiles against `BUILD/obj/EXPORT_HDRS/libkern/`, and 0005 never added the file to `libkern/os/Makefile`'s `EXPORT_MI_LIST`. Fixed by 0007. The other 1776 `error:` lines were `xcrun -find ctfconvert/ctfmerge/ctf_insert/scan-build` probes failing on every sub-make, since Xcode 15 dropped those tools; the build script now seeds them and passes `DO_CTFMERGE=0` |
+| #9 | POLARIS, 0001-0007 | running |
 
 ### What the closed header has to supply, determined by static audit
 
@@ -116,6 +117,7 @@ Applied in the order listed in `patches/series`:
 | `0004-sweet-polaris-irq-declarations` | adds POLARIS to the FSR fault-class macro chain, includes `<arm/machine_cpu.h>` in `sleh.c` | without it: `#error Incompatible CPU type configured`, and `cpu_signal_handler` has no prototype |
 | `0005-sweet-firehose-buffer-stub` | `libkern/os/firehose_buffer_private.h` (five prototypes, `FIREHOSE_BUFFER_KERNEL_CHUNK_COUNT`, the two `oslog_init` defaults) plus five inert entry points in `subr_log.c` | the header is closed source in every xnu drop; without it three TUs cannot compile and there is no KDK on the runner |
 | `0006-sweet-link-without-kdk-firehose-archive` | `LD_KERNEL_ARCHIVES` drops `-lfirehose_kernel` unless the SDK actually ships `libfirehose_kernel.a` | the archive lives only in a KDK, and with the five entry points implemented in-tree it is not needed; without this, `ld` fails *after* a full 25-minute compile |
+| `0007-sweet-export-firehose-header` | adds `firehose_buffer_private.h` to `EXPORT_MI_LIST` in `libkern/os/Makefile` | `bsd` compiles with `-I BUILD/obj/EXPORT_HDRS/libkern`, not the source tree, so a header that only exists in `libkern/os/` is invisible to `bsd/kern/subr_log.c` |
 
 93 patches exist in the iOS 16 tree. Checked one by one against 7195.141.2 with
 `git apply --check`: 13 apply unchanged, 80 need rewriting. This repository only

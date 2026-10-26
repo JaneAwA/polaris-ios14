@@ -115,12 +115,45 @@ step "make TARGET_CONFIGS=\"${KERNEL_CONFIG} ARM64 ${MACHINE_CONFIG}\" -j${JOBS}
 # `all`, not `install`: do_build_all:: do_build_kernel produces
 # BUILD/obj/kernel.release, while the install half would also try to write
 # /System/Library/Kernels through DSTROOT and fail under SIP for no benefit.
+#
+# Xcode 15 dropped ctfconvert/ctfmerge/ctf_insert/scan-build. MakeInc.cmd probes
+# each of them with `$(shell xcrun -sdk ... -find X)` guarded by `ifeq ($(X),)`,
+# and because the probe yields an empty string that guard is true on every
+# sub-make re-entry -- run #8 emitted 1776 copies of the same four messages.
+# Seeding the variables non-empty short-circuits the probes; DO_CTFMERGE=0 is
+# still required, because with it set the link recipe would run
+# `ctfmerge ... -o $@` and `true` would silently leave the kernel file unwritten.
+export CTFCONVERT=true CTFMERGE=true CTFINSERT=true SCAN_BUILD=true
 MAKE_ARGS=(
 	all -j"${JOBS}" -k
 	"SDKROOT=macosx"
 	"TARGET_CONFIGS=${KERNEL_CONFIG} ARM64 ${MACHINE_CONFIG}"
 	"BUILD_WERROR=0" "BUILD_LTO=0" "LOGCOLORS=n" "CONCISE=0"
+	"DO_CTFMERGE=0"
 )
+
+# `LD_KERNEL_LIBS = -lcc_kext` is unconditional in MakeInc.def:784. Apple ships
+# that archive either in the KDK (KernelSupport) or inside an internal SDK, and
+# a missing -l is a hard ld error, so probe before spending the build: if no
+# copy is reachable, drop the flag and let the link report whatever symbols were
+# actually needed. Anything printed here is worth reading in the log.
+step "kernel link prerequisites"
+CC_KEXT=""
+for cand in \
+	"$(xcrun --sdk macosx --show-sdk-path 2>/dev/null)/usr/lib/libcc_kext.a" \
+	"$(xcrun --sdk macosx --show-sdk-path 2>/dev/null)/usr/local/lib/kernel/libcc_kext.a" \
+	/Library/Developer/KDKs/*/System/Library/KernelSupport/libcc_kext.a
+do
+	if [ -e "$cand" ]; then CC_KEXT="$cand"; break; fi
+done
+if [ -n "$CC_KEXT" ]; then
+	echo "libcc_kext.a: ${CC_KEXT}"
+else
+	echo "libcc_kext.a: NOT FOUND -- dropping -lcc_kext from the link"
+	MAKE_ARGS+=( "LD_KERNEL_LIBS=" )
+fi
+ls /Library/Developer/KDKs/*/System/Library/KernelSupport/*.a 2>/dev/null | head -10 || echo "no KDK KernelSupport archives"
+
 if [ -n "$SDKROOT_OVERRIDE" ]; then
 	MAKE_ARGS+=( "SDKROOT=${SDKROOT_OVERRIDE}" "ALT_SDKROOT=${SDKROOT_OVERRIDE}" )
 fi
@@ -129,9 +162,13 @@ rc=$?
 
 step "result"
 echo "make exit: ${rc}"
-echo "compiler errors: $(grep -c 'error:' "$LOG" || true)"
-echo "---- first 40 compiler errors ----"
-grep -n 'error:' "$LOG" | head -40 || true
+# The ctf/scan-build probes print "xcrun: error:" on every makefile include, so
+# a raw `grep -c error:` reports thousands of false positives. Drop them.
+REAL_ERR_RE='error:|fatal error|undefined reference|library not found|duplicate symbol'
+NOISE_RE='ctfconvert|ctfmerge|ctf_insert|scan-build|unable to find utility|xcodebuild -sdk'
+echo "compiler errors (excluding missing Xcode tools): $(grep -E "$REAL_ERR_RE" "$LOG" | grep -vE "$NOISE_RE" | wc -l || true)"
+echo "---- first 40 real compiler errors ----"
+grep -E "$REAL_ERR_RE" "$LOG" | grep -vE "$NOISE_RE" | head -40 || true
 # linker failures do not contain "error:", so they need their own pass
 echo "---- linker diagnostics ----"
 grep -nE '^ld: |Undefined symbols|library not found|-lfirehose|duplicate symbol' "$LOG" | head -60 || true

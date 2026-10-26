@@ -4,3 +4,4 @@
 0004-sweet-polaris-irq-declarations.patch
 0005-sweet-firehose-buffer-stub.patch
 0006-sweet-link-without-kdk-firehose-archive.patch
+0007-sweet-export-firehose-header.patch

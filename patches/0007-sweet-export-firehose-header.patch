@@ -1,0 +1,14 @@
+diff --git a/libkern/os/Makefile b/libkern/os/Makefile
+index 74fa7b8..f5f49bd 100644
+--- a/libkern/os/Makefile
++++ b/libkern/os/Makefile
+@@ -59,7 +59,8 @@ INSTALL_KF_MI_LIST = ${KERNELFILES}
+ INSTALL_KF_MI_LCL_LIST = ${KERNELFILES} ${PRIVATE_KERNELFILES}
+ 
+ EXPORT_MI_LIST = \
+-	${KERNELFILES} ${PRIVATE_KERNELFILES} log_private.h
++	${KERNELFILES} ${PRIVATE_KERNELFILES} log_private.h \
++	firehose_buffer_private.h
+ 
+ EXPORT_MI_DIR = os
+ 
