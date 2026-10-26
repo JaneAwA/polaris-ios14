@@ -2,8 +2,9 @@
 # Build xnu-7195 (iOS 14.8 / Darwin 20.6 kernel generation) on a macOS runner.
 #
 # No third-party build helper is used: xnu-7195 predates the Kernel Debug Kit
-# requirement (no KDKROOT, no libfirehose), so a plain in-tree `make install`
-# is the whole build.
+# requirement (no KDKROOT), and the one closed archive it used to link against
+# (libfirehose_kernel.a) is replaced by in-tree stubs, so a plain in-tree
+# `make all` is the whole build.
 #
 # Environment:
 #   XNU_TAG         git tag of apple-oss-distributions/xnu   (xnu-7195.141.2)
@@ -106,8 +107,11 @@ for name in firehose_buffer_private.h; do
 done
 
 step "make TARGET_CONFIGS=\"${KERNEL_CONFIG} ARM64 ${MACHINE_CONFIG}\" -j${JOBS}"
+# `all`, not `install`: do_build_all:: do_build_kernel produces
+# BUILD/obj/kernel.release, while the install half would also try to write
+# /System/Library/Kernels through DSTROOT and fail under SIP for no benefit.
 MAKE_ARGS=(
-	install -j"${JOBS}" -k
+	all -j"${JOBS}" -k
 	"SDKROOT=macosx"
 	"TARGET_CONFIGS=${KERNEL_CONFIG} ARM64 ${MACHINE_CONFIG}"
 	"BUILD_WERROR=0" "BUILD_LTO=0" "LOGCOLORS=n" "CONCISE=0"
@@ -120,9 +124,12 @@ rc=$?
 
 step "result"
 echo "make exit: ${rc}"
-echo "error lines: $(grep -c 'error:' "$LOG" || true)"
-echo "---- first 40 errors ----"
+echo "compiler errors: $(grep -c 'error:' "$LOG" || true)"
+echo "---- first 40 compiler errors ----"
 grep -n 'error:' "$LOG" | head -40 || true
+# linker failures do not contain "error:", so they need their own pass
+echo "---- linker diagnostics ----"
+grep -nE '^ld: |Undefined symbols|library not found|-lfirehose|duplicate symbol' "$LOG" | head -60 || true
 echo "---- kernels produced ----"
 find "${SRC}/BUILD" -name 'kernel.*' -type f 2>/dev/null | while read -r k; do
 	printf '%s  %s bytes\n' "$k" "$(stat -f%z "$k")"

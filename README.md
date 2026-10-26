@@ -76,8 +76,9 @@ Boot arguments for this kernel: `unentitled_ios_sim_launch=1 sweet_ios_userland=
 | #2 | T8010, 0001-0002 | got past setup, then `-mcpu=hurricane` is not a clang 15 CPU (a stock Apple machine config problem, not ours) |
 | #3 | POLARIS, 0001-0003 | 756x `#error Incompatible CPU type configured` (the FSR macro chain in `osfmk/arm/proc_reg.h` did not know POLARIS) + `cpu_signal_handler` undeclared (0004) |
 | #4 | POLARIS, 0001-0004 | whole kernel compiled except `libkern/os/log.c`, `bsd/kern/subr_log.c`, `libkern/c++/OSKext.cpp`: `<os/firehose_buffer_private.h>` is closed and no KDK is installed on the runner (0005) |
-| #5 | POLARIS, 0001-0005 | cancelled: that revision of 0005 still left `FIREHOSE_BUFFER_KERNEL_CHUNK_COUNT` (used by `log.c:702`) undefined and redefined `FIREHOSE_CHUNK_SIZE` to a value chunk helpers do not use. Fixed before pushing 0006, see below |
-| #6 | POLARIS, 0001-0005 (corrected) | running |
+| #5 | POLARIS, 0001-0005 | cancelled: that revision of 0005 still left `FIREHOSE_BUFFER_KERNEL_CHUNK_COUNT` (used by `log.c:702`) undefined and redefined `FIREHOSE_CHUNK_SIZE` to a value chunk helpers do not use. Fixed before pushing, see below |
+| #6 | POLARIS, 0001-0005 (corrected) | cancelled before it reached the link: `LD_KERNEL_ARCHIVES` still carried `-lfirehose_kernel`, and `libfirehose_kernel.a` exists only inside a KDK. Fixed by 0006 |
+| #7 | POLARIS, 0001-0006 | running |
 
 ### What the closed header has to supply, determined by static audit
 
@@ -113,6 +114,7 @@ Applied in the order listed in `patches/series`:
 | `0003-sweet-polaris-machine-config` | `MACHINE_CONFIGS=POLARIS`: machine flags, `POLARIS.h`, board config, cache lines, GIC Group 1 setup, Group 1 IRQ routing in `sleh_irq` | this is what makes the kernel target SDM845 instead of an Apple SoC |
 | `0004-sweet-polaris-irq-declarations` | adds POLARIS to the FSR fault-class macro chain, includes `<arm/machine_cpu.h>` in `sleh.c` | without it: `#error Incompatible CPU type configured`, and `cpu_signal_handler` has no prototype |
 | `0005-sweet-firehose-buffer-stub` | `libkern/os/firehose_buffer_private.h` (five prototypes, `FIREHOSE_BUFFER_KERNEL_CHUNK_COUNT`, the two `oslog_init` defaults) plus five inert entry points in `subr_log.c` | the header is closed source in every xnu drop; without it three TUs cannot compile and there is no KDK on the runner |
+| `0006-sweet-link-without-kdk-firehose-archive` | `LD_KERNEL_ARCHIVES` drops `-lfirehose_kernel` unless the SDK actually ships `libfirehose_kernel.a` | the archive lives only in a KDK, and with the five entry points implemented in-tree it is not needed; without this, `ld` fails *after* a full 25-minute compile |
 
 93 patches exist in the iOS 16 tree. Checked one by one against 7195.141.2 with
 `git apply --check`: 13 apply unchanged, 80 need rewriting. This repository only
@@ -124,13 +126,17 @@ ever contains patches that have been verified against this exact tag.
 Nothing needs to be installed locally: `.github/workflows/xnu.yml` builds on a
 macOS runner and uploads `out/kernel.*` plus `build.log`.
 
+The target is `make all` rather than `make install`: `do_build_all:: do_build_kernel`
+is what produces `BUILD/obj/kernel.release`, and the install half would additionally
+try to write `/System/Library/Kernels` through `DSTROOT`, which SIP blocks.
+
 Inputs: `xnu_tag`, `kernel_config`, `machine_config`, `patch_set` (`series` | `none`),
 `sdk_mode` (`host` | `macos11.3`).
 
 Local equivalent:
 
 ```sh
-XNU_TAG=xnu-7195.141.2 MACHINE_CONFIG=T8010 PATCH_SET=series bash scripts/build-xnu.sh
+XNU_TAG=xnu-7195.141.2 MACHINE_CONFIG=POLARIS PATCH_SET=series bash scripts/build-xnu.sh
 ```
 
 ## Do not flash anything from this repository yet

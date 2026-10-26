@@ -1,0 +1,20 @@
+--- a/makedefs/MakeInc.def
++++ b/makedefs/MakeInc.def
+@@ -770,7 +770,17 @@
+ # Default runtime libraries to be linked with the kernel
+ #
+ LD_KERNEL_LIBS	   = -lcc_kext
++#
++# SWEET: libfirehose_kernel.a is shipped only inside a Kernel Debug Kit, and this
++# tree carries its own implementations of the five entry points the kernel calls
++# (bsd/kern/subr_log.c), so the archive is not needed. Linking it unconditionally
++# makes ld stop with "library not found for -lfirehose_kernel" only after the
++# whole kernel has been compiled, which costs a full build per attempt.
++ifneq ($(wildcard $(SDKROOT)/usr/local/lib/kernel/libfirehose_kernel.a),)
+ LD_KERNEL_ARCHIVES = $(LDFLAGS_KERNEL_SDK) -lfirehose_kernel
++else
++LD_KERNEL_ARCHIVES =
++endif
+ # Link opensource binary library
+ ifneq ($(filter T8020 T8101 T8020 T8101,$(CURRENT_MACHINE_CONFIG)),)
+ 	LDFLAGS_KERNEL_ONLY += -rdynamic -Wl,-force_load,$(KDKROOT)/System/Library/KernelSupport/lib$(CURRENT_MACHINE_CONFIG).os.$(CURRENT_KERNEL_CONFIG).a

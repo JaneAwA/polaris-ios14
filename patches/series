@@ -3,3 +3,4 @@
 0003-sweet-polaris-machine-config.patch
 0004-sweet-polaris-irq-declarations.patch
 0005-sweet-firehose-buffer-stub.patch
+0006-sweet-link-without-kdk-firehose-archive.patch
