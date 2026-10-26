@@ -1,0 +1,37 @@
+diff --git a/config/MASTER.arm64.polaris b/config/MASTER.arm64.polaris
+index cc3ac16..eea28a2 100644
+--- a/config/MASTER.arm64.polaris
++++ b/config/MASTER.arm64.polaris
+@@ -37,7 +37,7 @@
+ #  Without them the tree compiles and then fails to link with 209 undefined
+ #  symbols (every pmap_*, Switch_context, kvtophys, ads_zone, ...).
+ #
+-#  The three BSD attributes below exist because this kernel is built with
++#  The four BSD attributes below exist because this kernel is built with
+ #  PLATFORM=MacOSX (the SDK we have), so MASTER's macOS RELEASE list -- not the
+ #  iOS one -- is what gets applied. Each attribute compiles a file that macOS
+ #  leaves out but whose symbols Apple's own arm64 export lists still demand:
+@@ -46,6 +46,14 @@
+ #      config_csr                bsd/kern/kern_csr.c   -> csr_check
+ #      config_user_notification  osfmk/UserNotification/KUNCUserNotifications.c -> KUNC*
+ #
++#  config_csr_from_dt is what lets kern_csr.c compile on arm64 at all.
++#  The file has two implementations: '#if CONFIG_CSR_FROM_DT' reads the
++#  policy out of the device tree (lp-sip0/lp-sip1/lp-sip2), while the
++#  '#else' branch reads boot_args->flags and boot_args->csrActiveConfig,
++#  two fields that exist only in pexpert/pexpert/i386/boot.h. The arm64
++#  boot_args has bootFlags and nothing else, so without this attribute
++#  the build stops on 'no member named flags'.
++#
+ #  Note that `pgo` deliberately does not appear here. bsd/pgo/profile_runtime.c
+ #  only declares the two __llvm_profile_*_internal entry points; their bodies
+ #  live in compiler-rt and reach Apple's kernel through libcc_kext.a, so
+@@ -64,7 +72,7 @@
+ #  KERNEL_DEV =     [ KERNEL_BASE development mach_assert config_xnupost proc_ref_debug pgtrace ]
+ #  KERNEL_DEBUG =   [ KERNEL_BASE debug mach_assert config_xnupost config_ltable_stats config_ltable_debug config_waitq_stats config_workloop_debug config_waitq_debug pgtrace ]
+ #  BSD_BASE =       [ mach_bsd config_workqueue psynch config_proc_uuid_policy config_personas config_imageboot config_imageboot_img4 ]
+-#  BSD_RELEASE =    [ BSD_BASE no_printf_str no_kprintf_str secure_kernel quota config_csr config_user_notification ]
++#  BSD_RELEASE =    [ BSD_BASE no_printf_str no_kprintf_str secure_kernel quota config_csr config_csr_from_dt config_user_notification ]
+ #  BSD_DEV =        [ BSD_BASE config_netboot config_imgsrc_access config_lockerboot config_coredump pgo config_vnguard ]
+ #  BSD_DEBUG =      [ BSD_BASE config_netboot config_imgsrc_access config_lockerboot config_coredump pgo config_vnguard ]
+ #  FILESYS_BASE =   [ devfs fifo fs_compression config_protect config_mnt_rootsnap config_triggers config_fse routefs namedstreams config_dataless_files bindfs]

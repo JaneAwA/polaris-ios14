@@ -9,3 +9,4 @@
 0009-sweet-replace-cc-kext-symbols.patch
 0010-sweet-open-pmap-residuals.patch
 0011-sweet-closed-symbol-shims.patch
+0012-sweet-csr-from-device-tree.patch
