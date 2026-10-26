@@ -64,10 +64,10 @@ index b3352a4..6303bb4 100644
 +}
 diff --git a/libkern/os/firehose_buffer_private.h b/libkern/os/firehose_buffer_private.h
 new file mode 100644
-index 0000000..0ab1217
+index 0000000..1d78913
 --- /dev/null
 +++ b/libkern/os/firehose_buffer_private.h
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,56 @@
 +/*
 + * Minimal stand-in for Apple's internal <os/firehose_buffer_private.h>.
 + *
@@ -95,9 +95,13 @@ index 0000000..0ab1217
 +#include <firehose/tracepoint_private.h>
 +#include <firehose/chunk_private.h>
 +
-+/* Values used by oslog_init()/oslogioctl(); the buffer stays unused, so these
-+ * only size the allocation and the static boot buffer. */
-+#define FIREHOSE_CHUNK_SIZE                             (16 * 1024)
++/*
++ * Buffer geometry used by oslog_init() and oslogioctl(). The ring itself stays
++ * unused, so these only size the allocation. The chunk size deliberately comes
++ * from <firehose/chunk_private.h>, which every chunk helper already assumes;
++ * defining our own here would fight that value.
++ */
++#define FIREHOSE_BUFFER_KERNEL_CHUNK_COUNT              32
 +#define FIREHOSE_BUFFER_KERNEL_DEFAULT_CHUNK_COUNT      32
 +#define FIREHOSE_BUFFER_KERNEL_DEFAULT_IO_PAGES         1
 +
