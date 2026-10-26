@@ -138,6 +138,26 @@ const char *loader_boot(uintptr_t dtb)
 
 	uintptr_t entry_pa = p->entry_va + pa_of_va_base;
 	con_hex("JUMP", entry_pa);
+
+	/*
+	 * Bring-up self-check.  "jumped and died" and "never jumped" look
+	 * identical on a screen, so read back what we actually put in memory
+	 * and what the kernel will see in x0.
+	 *
+	 * CODE  - the two words at the entry point.  A b/bl is 0x14xxxxxx or
+	 *         0x94xxxxxx; zeros or 0xffffffff mean the copy missed.
+	 * KERN  - the first word of the image at phys_base, i.e. the ARM64
+	 *         header code0 that ABL itself checks.
+	 * EL    - the exception level we hand over in; xnu only runs at EL1.
+	 */
+	uint32_t code0 = *(volatile uint32_t *)entry_pa;
+	uint32_t code1 = *(volatile uint32_t *)(entry_pa + 4);
+	uint32_t kword = *(volatile uint32_t *)p->phys_base;
+	uint64_t cel;
+	__asm__ volatile("mrs %0, CurrentEL" : "=r"(cel));
+	con_hex2("CODE", "0=", code0, "1=", code1);
+	con_hex2("KERN", "w0=", kword, "el=", (uint32_t)(cel >> 2));
+	con_hex2("BA", "virt=", (uint32_t)ba->virtBase, "phys=", (uint32_t)ba->physBase);
 	con_str("XNU", "jumping (fbcon clears screen)");
 
 	/* Everything was written with the MMU and caches off; drop any stale I-cache lines too. */
