@@ -1,0 +1,31 @@
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -1812,7 +1812,27 @@
+ #endif // ARM_LARGE_MEMORY
+ 	physmap_end = physmap_base + real_phys_size;
+ #else
++#if defined(ARM_LARGE_MEMORY) && defined(ARM64_BOARD_CONFIG_POLARIS)
++	/*
++	 * With the large-memory layout the physical aperture occupies its own L1
++	 * slot below VM_MIN_KERNEL_ADDRESS, so physmap_base + mem_size only reaches
++	 * past the kernel's link address once the machine has more than 64 GB.
++	 * On a 2 GB device it lands below it, and then:
++	 *
++	 *   - init_ptpages(cpu_tte, gVirtBase, dynamic_memory_begin, ...) below is a
++	 *     no-op, so the L1 entry covering the kernel is never created and the
++	 *     first segment arm_vm_prot_init() protects takes a translation fault on
++	 *     phystokv(0) + L2 index * 8;
++	 *   - dynamic_memory_begin points inside the aperture, so pmap_bootstrap()
++	 *     would start the kernel heap on top of the physmap.
++	 *
++	 * The kernel's static range ends at topOfKernelData, so measure it from
++	 * there -- this is what the XNU_MONITOR large-memory path does above.
++	 */
++	static_memory_end = phystokv(args->topOfKernelData);
++#else
+ 	static_memory_end = physmap_base + mem_size + (PTOV_TABLE_SIZE * ARM_TT_TWIG_SIZE); // worst possible case for block alignment
++#endif // ARM_LARGE_MEMORY && POLARIS
+ 	physmap_end = physmap_base + real_phys_size + (PTOV_TABLE_SIZE * ARM_TT_TWIG_SIZE);
+ #endif
+ 

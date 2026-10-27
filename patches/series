@@ -18,3 +18,5 @@
 0018-polaris-panic-to-panel.patch
 0019-polaris-abort-trace.patch
 0020-polaris-first-abort.patch
+0021-polaris-kva-trace.patch
+0022-polaris-kva-trace.patch

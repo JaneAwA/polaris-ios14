@@ -1,0 +1,119 @@
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -1032,6 +1032,29 @@
+ 	polaris_puts(&buf[i]);
+ }
+ 
++/*
++ * POLARIS: one line of numbers from anywhere in the kernel, drawn straight on
++ * the panel.  Used while the pmap is still being built, where kprintf means
++ * taking the console lock and formatting floats of hex through _doprnt.
++ */
++void
++polaris_note(const char *tag, uint64_t a, uint64_t b, uint64_t c)
++{
++	if (fbcon_base == NULL) {
++		return;
++	}
++	polaris_puts("\nPOLARIS ");
++	while (*tag != '\0') {
++		fbcon_draw(*tag++);
++	}
++	polaris_puts(" ");
++	polaris_hex(a);
++	polaris_puts(" ");
++	polaris_hex(b);
++	polaris_puts(" ");
++	polaris_hex(c);
++}
++
+ struct polaris_abort {
+ 	uint64_t far;
+ 	uint64_t esr;
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -351,6 +351,11 @@
+ SECURITY_READ_ONLY_LATE(static ptov_table_entry)        ptov_table[PTOV_TABLE_SIZE];
+ SECURITY_READ_ONLY_LATE(static boolean_t)               kva_active = FALSE;
+ 
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++/* pexpert/arm/pe_serial.c: draw one line of numbers on the panel. */
++extern void polaris_note(const char *tag, uint64_t a, uint64_t b, uint64_t c);
++#endif
++
+ 
+ vm_map_address_t
+ phystokv(pmap_paddr_t pa)
+@@ -862,6 +867,21 @@
+ {
+ 	tt_entry_t *tte1, *tte2;
+ 	tte1 = cpu_tte + L1_TABLE_INDEX(va);
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	/*
++	 * A missing L1 table here is fatal and silent: L2_TABLE_VA() would take
++	 * the empty entry's zero address, turn it into gVirtBase - gPhysBase and
++	 * dereference that.  Say which address had no table before it happens.
++	 */
++	{
++		static int reported;
++
++		if ((*tte1 & ARM_TTE_TABLE_MASK) == 0 && reported < 4) {
++			reported++;
++			polaris_note("L1Z", va, (uint64_t)(uintptr_t)tte1, *tte1);
++		}
++	}
++#endif
+ 	tte2 = L2_TABLE_VA(tte1) + L2_TABLE_INDEX(va);
+ 
+ 	return tte2;
+@@ -1164,6 +1184,21 @@
+ void
+ arm_vm_prot_init(__unused boot_args * args)
+ {
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	/*
++	 * The addresses this walk depends on, in the order they matter: the
++	 * base pair that converts VA to PA, the physical window, the physmap,
++	 * and the L1 entry that the first segment is supposed to live under.
++	 */
++	polaris_note("CFG", gVirtBase, gPhysBase, mem_size);
++	polaris_note("AVAIL", avail_start, avail_end, real_avail_end);
++	polaris_note("PMAP", physmap_base, physmap_end, static_memory_end);
++	polaris_note("TTE", (uint64_t)(uintptr_t)cpu_tte,
++	    (uint64_t)cpu_tte[L1_TABLE_INDEX(segTEXTB)],
++	    (uint64_t)L1_TABLE_INDEX(segTEXTB));
++	polaris_note("SEG", segTEXTB, segDATAB, segLINKB);
++#endif
++
+ 	segLOWESTTEXT = UINT64_MAX;
+ 	if (segSizePRELINKTEXT && (segPRELINKTEXTB < segLOWESTTEXT)) {
+ 		segLOWESTTEXT = segPRELINKTEXTB;
+@@ -1670,8 +1705,15 @@
+ {
+ 	tt_entry_t *l1_tte;
+ 	vm_offset_t ptpage_vaddr;
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	vm_map_address_t start0 = start;
++	tt_entry_t *l1_first;
++#endif
+ 
+ 	l1_tte = tt + ((start & ARM_TT_L1_INDEX_MASK) >> ARM_TT_L1_SHIFT);
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	l1_first = l1_tte;
++#endif
+ 
+ 	while (start < end) {
+ 		if (*l1_tte == ARM_TTE_EMPTY) {
+@@ -1689,6 +1731,10 @@
+ 		start += ARM_TT_L1_SIZE;
+ 		l1_tte++;
+ 	}
++
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	polaris_note("PT", (uint64_t)start0, (uint64_t)end, *l1_first);
++#endif
+ }
+ 
+ #define ARM64_PHYSMAP_SLIDE_RANGE (1ULL << 30) // 1 GB
