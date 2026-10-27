@@ -117,10 +117,11 @@ diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
  
  	/* Ensure TTEs are visible */
  	dsb		ish
-@@ -868,14 +905,15 @@
+@@ -868,16 +905,14 @@
  	MSR_SCTLR_EL1_X0
  	isb		sy
  
+-#if !defined(POLARIS)
 -	MOV64	x1, SCTLR_EL1_DEFAULT
 -#if HAS_APPLE_PAC
 -	orr		x1, x1, #(SCTLR_PACIB_ENABLED)
@@ -129,13 +130,13 @@ diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
 -#endif /* HAS_APPLE_PAC */
 -	cmp		x0, x1
 -	bne		.
+-#endif /* !POLARIS: firmware owns SCTLR, nothing to compare against */
 +	/*
-+	 * Upstream asserts here that SCTLR_EL1 reads back what was written.
-+	 * That holds on Apple silicon, where every bit of SCTLR_EL1_DEFAULT is
-+	 * either writable or RES1.  On SDM845 several are RES0 or UNKNOWN, the
-+	 * readback differs, and 'bne .' parked the boot CPU before it could say
-+	 * a word -- the very silent hang this instrumentation exists to find.
-+	 * The write is proved by the next instruction fetching from a KVA.
++	 * 0003 already compiled the Apple readback assertion out for POLARIS --
++	 * SDM845 leaves several SCTLR_EL1 bits RES0 or UNKNOWN, so the compare
++	 * would never match.  Take the dead block out and put something useful in
++	 * its place: if this cell appears, SCTLR.M took and the instruction after
++	 * the barrier was fetched through the KVA map.
 +	 */
 +	POLARIS_MARK (120 * 4320), 0xff008000	// MMU on
  
