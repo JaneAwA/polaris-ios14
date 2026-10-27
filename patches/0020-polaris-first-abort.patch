@@ -1,0 +1,197 @@
+diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -75,7 +75,7 @@
+  */
+ extern void polaris_kabort_trace(uint64_t far, uint64_t esr, uint64_t pc,
+     uint64_t lr, uint64_t sp, uint64_t fp, uint64_t cpsr, uint64_t thread,
+-    uint64_t task, uint64_t kstack);
++    uint64_t task, uint64_t kstack, uint64_t ktask);
+ #endif
+ 
+ #ifndef __arm64__
+@@ -1032,7 +1032,8 @@
+ 		    get_saved_state_cpsr(state),
+ 		    (uint64_t)(uintptr_t)cur,
+ 		    cur ? (uint64_t)(uintptr_t)cur->task : 0,
+-		    cur ? (uint64_t)cur->machine.kstackptr : 0);
++		    cur ? (uint64_t)cur->machine.kstackptr : 0,
++		    (uint64_t)(uintptr_t)kernel_task);
+ 	}
+ #endif
+ 
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -993,11 +993,16 @@
+  * POLARIS: report an early abort on the panel.
+  *
+  * A data abort from EL1 reaches handle_abort() before anything else looks at
+- * it, and on this port that path can end inside vm_fault(), which dies on
+- * current_task() because kernel_task does not exist yet.  Print the abort
+- * itself -- address, syndrome, pc and the caller chain -- while the console
+- * still works, so the fault that started it is not lost.  Capped, because a
+- * repeating fault would otherwise paint the screen forever.
++ * it, and on this port that path ends inside vm_fault(), which dies on
++ * current_task() -- init_thread.task is still NULL until the bootstrap thread
++ * is created, so &task->faults is a read of address 0x368.  That fault is
++ * itself an abort, so the handler re-enters and the exception stack fills up
++ * with copies of the same report until it overflows and the real first fault
++ * has long scrolled off the top of the panel.
++ *
++ * So: keep the first abort's numbers, print them again under every later
++ * report, and stop the machine on the first abort that has no task -- there
++ * is nothing downstream that could survive it.
+  */
+ static void
+ polaris_puts(const char *s)
+@@ -1007,6 +1012,11 @@
+ 	}
+ }
+ 
++/*
++ * Minimal-width hex.  These lines have to stay inside the panel's ~55
++ * columns, and padding every value to sixteen digits costs more than the
++ * whole rest of the line.
++ */
+ static void
+ polaris_hex(uint64_t v)
+ {
+@@ -1018,51 +1028,96 @@
+ 		int d = (int)(v & 0xfu);
+ 		buf[--i] = (char)(d < 10 ? '0' + d : 'a' + d - 10);
+ 		v >>= 4;
+-	} while (v != 0 && i > 0);
+-	while (i > 0) {
+-		buf[--i] = '0';
+-	}
++	} while (v != 0);
+ 	polaris_puts(&buf[i]);
+ }
+ 
++struct polaris_abort {
++	uint64_t far;
++	uint64_t esr;
++	uint64_t pc;
++	uint64_t lr;
++	int      valid;
++};
++
++static struct polaris_abort polaris_first_abort;
++static int polaris_abort_count;
++
++static void
++polaris_print_first_abort(void)
++{
++	if (!polaris_first_abort.valid) {
++		return;
++	}
++	polaris_puts("\nPOLARIS #1 far=");
++	polaris_hex(polaris_first_abort.far);
++	polaris_puts(" esr=");
++	polaris_hex(polaris_first_abort.esr);
++	polaris_puts("\nPOLARIS #1 pc=");
++	polaris_hex(polaris_first_abort.pc);
++	polaris_puts(" lr=");
++	polaris_hex(polaris_first_abort.lr);
++}
++
+ void
+ polaris_kabort_trace(uint64_t far, uint64_t esr, uint64_t pc, uint64_t lr,
+     uint64_t sp, uint64_t fp, uint64_t cpsr, uint64_t thread, uint64_t task,
+-    uint64_t kstack)
++    uint64_t kstack, uint64_t ktask)
+ {
+-	static int reports;
+ 	uint64_t lo, hi;
++	int n;
+ 
+-	if (fbcon_base == NULL || reports >= 6) {
++	if (fbcon_base == NULL) {
+ 		return;
+ 	}
+-	reports++;
+ 
+-	polaris_puts("\nPOLARIS ABORT far=");
++	if (!polaris_first_abort.valid) {
++		polaris_first_abort.valid = 1;
++		polaris_first_abort.far = far;
++		polaris_first_abort.esr = esr;
++		polaris_first_abort.pc = pc;
++		polaris_first_abort.lr = lr;
++	}
++
++	n = ++polaris_abort_count;
++	if (n > 6) {
++		return;
++	}
++
++	polaris_puts("\nPOLARIS ABORT #");
++	polaris_hex((uint64_t)n);
++	polaris_puts(" far=");
+ 	polaris_hex(far);
+ 	polaris_puts(" esr=");
+ 	polaris_hex(esr);
+-	polaris_puts(" cpsr=");
+-	polaris_hex(cpsr);
+-	polaris_puts("\nPOLARIS   pc=");
++	polaris_puts("\nPOLARIS pc=");
+ 	polaris_hex(pc);
+ 	polaris_puts(" lr=");
+ 	polaris_hex(lr);
+-	polaris_puts("\nPOLARIS   sp=");
++	polaris_puts("\nPOLARIS sp=");
+ 	polaris_hex(sp);
+ 	polaris_puts(" fp=");
+ 	polaris_hex(fp);
+-	polaris_puts("\nPOLARIS   thread=");
++	polaris_puts("\nPOLARIS th=");
+ 	polaris_hex(thread);
+ 	polaris_puts(" task=");
+ 	polaris_hex(task);
+-	polaris_puts(" kstack=");
++	polaris_puts(" kt=");
++	polaris_hex(ktask);
++	polaris_puts(" ks=");
+ 	polaris_hex(kstack);
++	polaris_puts(" cpsr=");
++	polaris_hex(cpsr);
+ 	polaris_puts("\n");
+ 
++	if (n > 1) {
++		polaris_print_first_abort();
++		polaris_puts("\n");
++	}
++
+ 	lo = sp - 0x400;
+ 	hi = sp + 0x20000;
+-	for (int i = 0; i < 8; i++) {
++	for (int i = 0; i < 6; i++) {
+ 		uint64_t next, ret;
+ 
+ 		if ((fp & 0xfu) != 0 || fp < lo || fp >= hi) {
+@@ -1070,7 +1125,7 @@
+ 		}
+ 		next = *(volatile uint64_t *)fp;
+ 		ret = *(volatile uint64_t *)(fp + 8);
+-		polaris_puts("POLARIS   bt ");
++		polaris_puts("POLARIS bt ");
+ 		polaris_hex(ret);
+ 		polaris_puts("\n");
+ 		if (next <= fp) {
+@@ -1078,6 +1133,15 @@
+ 		}
+ 		fp = next;
+ 	}
++
++	if (task == 0) {
++		polaris_puts("\nPOLARIS HALT no task, kt=");
++		polaris_hex(ktask);
++		polaris_puts("\n");
++		for (;;) {
++			__asm__ volatile ("wfe");
++		}
++	}
+ }
+ 
+ static void
