@@ -127,49 +127,52 @@ diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
  	arm_slide_rebase_and_sign_image();
  
  	/* If kernel integrity is supported, use a constant copy of the boot args. */
-diff --git a/osfmk/arm/arm_vm_init.c b/osfmk/arm/arm_vm_init.c
---- a/osfmk/arm/arm_vm_init.c
-+++ b/osfmk/arm/arm_vm_init.c
-@@ -402,6 +402,7 @@
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -1694,6 +1694,10 @@
+ #define ARM64_PHYSMAP_SLIDE_RANGE (1ULL << 30) // 1 GB
+ #define ARM64_PHYSMAP_SLIDE_MASK  (ARM64_PHYSMAP_SLIDE_RANGE - 1)
  
- /* POLARIS bring-up: paints a cell of the progress grid started in start.s. */
- extern void polaris_boot_mark(unsigned int slot, unsigned int colour);
++/* POLARIS bring-up: paints a cell of the progress grid started in start.s. */
++extern void polaris_boot_mark(unsigned int slot, unsigned int colour);
 +extern void polaris_console_suspend(void);
- 
++
  void
  arm_vm_init(uint64_t memory_size, boot_args * args)
-@@ -472,6 +473,9 @@
- 		tte++;
- 	}
+ {
+@@ -1842,6 +1846,9 @@
+ 	 */
+ 	init_ptpages(cpu_tte, gVirtBase, dynamic_memory_begin, TRUE, 0);
  
-+	/* Identity table is now DRAM-only: still on, still writable. */
++	/* Kernel VA table built (this is the bulk of arm_vm_init's page-table work). */
++	polaris_boot_mark(12, 0xff800080u);
++
+ #if defined(ARM_LARGE_MEMORY)
+ 	/*
+ 	 * Initialize l1 page table pages :
+@@ -1964,6 +1971,9 @@
+ 	vm_prelink_sdata = segPRELINKDATAB;
+ 	vm_prelink_edata = segPRELINKDATAB + segSizePRELINKDATA;
+ 
++	/* Segments, fileset asserts and page size all survived: prot_init is next. */
 +	polaris_boot_mark(13, 0xff00ffffu);
-+
- 	/* Skip 6 pages (four L1 + two L2 entries) */
- 	avail_start = cpu_ttep + ARM_PGBYTES * 6;
- 	avail_end = gPhysBase + mem_size;
-@@ -579,8 +583,14 @@
- 	vm_kernel_slid_base = segTEXTB;
- 	vm_kernel_slid_top = vm_kext_top;
- 
-+	/* Everything up to pmap_bootstrap() survived: segments, DT, page size. */
-+	polaris_boot_mark(14, 0xffff8000u);
-+
- 	pmap_bootstrap((gVirtBase + MEM_SIZE_MAX + 0x3FFFFF) & 0xFFC00000);
- 
-+	/* pmap_bootstrap() returned; arm_vm_prot_init() is next. */
-+	polaris_boot_mark(15, 0xff00ff00u);
 +
  	arm_vm_prot_init(args);
  
  	vm_page_kernelcache_count = (unsigned int) (atop_64(end_kern - segLOWEST));
-@@ -616,6 +626,9 @@
- 	 */
- 	polaris_boot_mark(12, 0xff800080u);
+@@ -2017,6 +2027,14 @@
  
-+	/* TTBR0 is about to change: the panel's identity mapping goes with it. */
+ 	ml_enable_monitor();
+ 
++	/*
++	 * Last point where the identity table still maps the panel: the next
++	 * store to TTBR0 drops it, and nothing maps the framebuffer again until
++	 * serial_init() runs after pmap_bootstrap().
++	 */
++	polaris_boot_mark(14, 0xffff8000u);
 +	polaris_console_suspend();
 +
- 	set_mmu_ttb(cpu_ttep);
- 	set_mmu_ttb_alternate(cpu_ttep);
+ 	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
+ 
  	flush_mmu_tlb();
