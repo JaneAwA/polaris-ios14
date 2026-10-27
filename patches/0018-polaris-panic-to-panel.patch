@@ -1,0 +1,175 @@
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -840,6 +840,8 @@
+ static volatile uint32_t *fbcon_base;
+ static uint32_t fbcon_col, fbcon_row, fbcon_cols, fbcon_rows, fbcon_words;
+ static int fbcon_registered;
++/* fbcon_base holds the raw MMIO address, not a kernel mapping (pre-pmap). */
++static int fbcon_physical;
+ 
+ static void
+ fbcon_clear_row(uint32_t row)
+@@ -907,11 +909,26 @@
+ {
+ 	vm_offset_t va;
+ 
+-	if (fbcon_base != NULL) {
++	if (fbcon_base != NULL && !fbcon_physical) {
+ 		return;         /* mapped and cleared already: keep the log on screen */
+ 	}
+ 	if (!pmap_initialized) {
+-		return;         /* mapping has to wait for pmap_init; serial_init() runs again */
++		/*
++		 * pmap_init() has not run, so ml_io_map() is unavailable.  start.s
++		 * put the panel in the identity table for exactly this window, so
++		 * the raw address is usable: take it and set the geometry up.  The
++		 * first two text rows belong to the progress grid, so begin below.
++		 */
++		if (fbcon_base == NULL) {
++			fbcon_base = (volatile uint32_t *)(uintptr_t)FBCON_BASE;
++			fbcon_physical = 1;
++			fbcon_words = FBCON_STRIDE / 4;
++			fbcon_cols = FBCON_WIDTH / (8 * FBCON_SCALE);
++			fbcon_rows = FBCON_HEIGHT / (16 * FBCON_SCALE);
++			fbcon_col = 0;
++			fbcon_row = 8;
++		}
++		return;         /* serial_init() runs again once pmap_init() is done */
+ 	}
+ 	va = ml_io_map_wcomb((vm_offset_t)FBCON_BASE, FBCON_HEIGHT * FBCON_STRIDE);
+ 	if (va == 0) {
+@@ -921,6 +938,15 @@
+ 	fbcon_words = FBCON_STRIDE / 4;
+ 	fbcon_cols = FBCON_WIDTH / (8 * FBCON_SCALE);
+ 	fbcon_rows = FBCON_HEIGHT / (16 * FBCON_SCALE);
++	if (fbcon_physical) {
++		/*
++		 * Same pixels, now behind the kernel map.  Keep the cursor where the
++		 * early console left it and do not clear: whatever was printed before
++		 * pmap_init() is the reason this port is being debugged.
++		 */
++		fbcon_physical = 0;
++		return;
++	}
+ 	fbcon_col = fbcon_row = 0;
+ 	for (uint32_t r = 0; r < fbcon_rows; r++) {
+ 		fbcon_clear_row(r);
+@@ -1019,6 +1045,46 @@
+ 	register_serial_functions(&polaris_fbcon_functions);
+ }
+ 
++/*
++ * POLARIS: bring the framebuffer console up before pmap_init().
++ *
++ * arm_init() calls this right after its first progress cell so that anything
++ * panicking between there and the point where ml_io_map() starts working still
++ * gets its message on the panel instead of into the void.  The raw address is
++ * only valid while TTBR0 holds the identity table start.s built, which is
++ * exactly the window arm_vm_init() runs in.  serial_init() re-runs later and
++ * swaps fbcon_base for the kernel mapping.
++ */
++void
++polaris_console_early_init(void)
++{
++	if (fbcon_registered) {
++		return;
++	}
++	fbcon_init();
++	if (fbcon_base == NULL) {
++		return;
++	}
++	fbcon_registered = 1;
++	register_serial_functions(&polaris_fbcon_functions);
++}
++
++/*
++ * POLARIS: stop writing to the panel before TTBR0 leaves the identity table.
++ *
++ * The early console reaches the framebuffer through the raw address, which
++ * only start.s's table maps.  arm_vm_init() calls this just before it installs
++ * the kernel pmap; serial_init() re-registers fbcon_base through ml_io_map()
++ * later, and the cursor position survives, so nothing already printed is lost.
++ */
++void
++polaris_console_suspend(void)
++{
++	if (fbcon_physical) {
++		fbcon_base = NULL;
++	}
++}
++
+ #else /* !ARM64_BOARD_CONFIG_POLARIS */
+ 
+ static void
+diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -165,6 +165,7 @@
+  * the physical base are already there.
+  */
+ extern void polaris_boot_mark(unsigned int slot, unsigned int colour);
++extern void polaris_console_early_init(void);
+ 
+ /*
+  * Forward definition
+@@ -322,6 +323,13 @@
+ 	/* C code is running: everything start.s set up worked. */
+ 	polaris_boot_mark(9, 0xff800000u);
+ 
++	/*
++	 * From here on a failed assert() is a panic, and the identity mapping
++	 * start.s built is the only way to show it: register the framebuffer as
++	 * the serial device now, before anything below can assert.
++	 */
++	polaris_console_early_init();
++
+ 	arm_slide_rebase_and_sign_image();
+ 
+ 	/* If kernel integrity is supported, use a constant copy of the boot args. */
+diff --git a/osfmk/arm/arm_vm_init.c b/osfmk/arm/arm_vm_init.c
+--- a/osfmk/arm/arm_vm_init.c
++++ b/osfmk/arm/arm_vm_init.c
+@@ -402,6 +402,7 @@
+ 
+ /* POLARIS bring-up: paints a cell of the progress grid started in start.s. */
+ extern void polaris_boot_mark(unsigned int slot, unsigned int colour);
++extern void polaris_console_suspend(void);
+ 
+ void
+ arm_vm_init(uint64_t memory_size, boot_args * args)
+@@ -472,6 +473,9 @@
+ 		tte++;
+ 	}
+ 
++	/* Identity table is now DRAM-only: still on, still writable. */
++	polaris_boot_mark(13, 0xff00ffffu);
++
+ 	/* Skip 6 pages (four L1 + two L2 entries) */
+ 	avail_start = cpu_ttep + ARM_PGBYTES * 6;
+ 	avail_end = gPhysBase + mem_size;
+@@ -579,8 +583,14 @@
+ 	vm_kernel_slid_base = segTEXTB;
+ 	vm_kernel_slid_top = vm_kext_top;
+ 
++	/* Everything up to pmap_bootstrap() survived: segments, DT, page size. */
++	polaris_boot_mark(14, 0xffff8000u);
++
+ 	pmap_bootstrap((gVirtBase + MEM_SIZE_MAX + 0x3FFFFF) & 0xFFC00000);
+ 
++	/* pmap_bootstrap() returned; arm_vm_prot_init() is next. */
++	polaris_boot_mark(15, 0xff00ff00u);
++
+ 	arm_vm_prot_init(args);
+ 
+ 	vm_page_kernelcache_count = (unsigned int) (atop_64(end_kern - segLOWEST));
+@@ -616,6 +626,9 @@
+ 	 */
+ 	polaris_boot_mark(12, 0xff800080u);
+ 
++	/* TTBR0 is about to change: the panel's identity mapping goes with it. */
++	polaris_console_suspend();
++
+ 	set_mmu_ttb(cpu_ttep);
+ 	set_mmu_ttb_alternate(cpu_ttep);
+ 	flush_mmu_tlb();
