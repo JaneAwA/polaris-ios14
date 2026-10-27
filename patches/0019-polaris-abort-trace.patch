@@ -1,0 +1,144 @@
+diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -67,8 +67,16 @@
+ 
+ #include <prng/entropy.h>
+ 
+-
+-
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++/*
++ * POLARIS: pexpert/arm/pe_serial.c.  Dumps an abort on the panel before the
++ * handler can disappear into vm_fault(); every report is a handful of lines,
++ * so the number of them is capped by the callee.
++ */
++extern void polaris_kabort_trace(uint64_t far, uint64_t esr, uint64_t pc,
++    uint64_t lr, uint64_t sp, uint64_t fp, uint64_t cpsr, uint64_t thread,
++    uint64_t task, uint64_t kstack);
++#endif
+ 
+ #ifndef __arm64__
+ #error Should only be compiling for arm64.
+@@ -1014,6 +1022,20 @@
+ 	fault_status_t fault_code;
+ 	vm_prot_t      fault_type;
+ 
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	{
++		thread_t cur = current_thread();
++
++		polaris_kabort_trace((uint64_t)fault_addr, (uint64_t)esr,
++		    get_saved_state_pc(state), get_saved_state_lr(state),
++		    get_saved_state_sp(state), get_saved_state_fp(state),
++		    get_saved_state_cpsr(state),
++		    (uint64_t)(uintptr_t)cur,
++		    cur ? (uint64_t)(uintptr_t)cur->task : 0,
++		    cur ? (uint64_t)cur->machine.kstackptr : 0);
++	}
++#endif
++
+ 	inspect_abort(ESR_ISS(esr), &fault_code, &fault_type);
+ 	handler(state, esr, fault_addr, fault_code, fault_type, recover, expected_fault_handler);
+ }
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -989,6 +989,97 @@
+ 	__asm__ volatile ("dsb sy" ::: "memory");
+ }
+ 
++/*
++ * POLARIS: report an early abort on the panel.
++ *
++ * A data abort from EL1 reaches handle_abort() before anything else looks at
++ * it, and on this port that path can end inside vm_fault(), which dies on
++ * current_task() because kernel_task does not exist yet.  Print the abort
++ * itself -- address, syndrome, pc and the caller chain -- while the console
++ * still works, so the fault that started it is not lost.  Capped, because a
++ * repeating fault would otherwise paint the screen forever.
++ */
++static void
++polaris_puts(const char *s)
++{
++	while (*s != '\0') {
++		fbcon_draw(*s++);
++	}
++}
++
++static void
++polaris_hex(uint64_t v)
++{
++	char buf[17];
++	int i = 16;
++
++	buf[16] = '\0';
++	do {
++		int d = (int)(v & 0xfu);
++		buf[--i] = (char)(d < 10 ? '0' + d : 'a' + d - 10);
++		v >>= 4;
++	} while (v != 0 && i > 0);
++	while (i > 0) {
++		buf[--i] = '0';
++	}
++	polaris_puts(&buf[i]);
++}
++
++void
++polaris_kabort_trace(uint64_t far, uint64_t esr, uint64_t pc, uint64_t lr,
++    uint64_t sp, uint64_t fp, uint64_t cpsr, uint64_t thread, uint64_t task,
++    uint64_t kstack)
++{
++	static int reports;
++	uint64_t lo, hi;
++
++	if (fbcon_base == NULL || reports >= 6) {
++		return;
++	}
++	reports++;
++
++	polaris_puts("\nPOLARIS ABORT far=");
++	polaris_hex(far);
++	polaris_puts(" esr=");
++	polaris_hex(esr);
++	polaris_puts(" cpsr=");
++	polaris_hex(cpsr);
++	polaris_puts("\nPOLARIS   pc=");
++	polaris_hex(pc);
++	polaris_puts(" lr=");
++	polaris_hex(lr);
++	polaris_puts("\nPOLARIS   sp=");
++	polaris_hex(sp);
++	polaris_puts(" fp=");
++	polaris_hex(fp);
++	polaris_puts("\nPOLARIS   thread=");
++	polaris_hex(thread);
++	polaris_puts(" task=");
++	polaris_hex(task);
++	polaris_puts(" kstack=");
++	polaris_hex(kstack);
++	polaris_puts("\n");
++
++	lo = sp - 0x400;
++	hi = sp + 0x20000;
++	for (int i = 0; i < 8; i++) {
++		uint64_t next, ret;
++
++		if ((fp & 0xfu) != 0 || fp < lo || fp >= hi) {
++			break;
++		}
++		next = *(volatile uint64_t *)fp;
++		ret = *(volatile uint64_t *)(fp + 8);
++		polaris_puts("POLARIS   bt ");
++		polaris_hex(ret);
++		polaris_puts("\n");
++		if (next <= fp) {
++			break;
++		}
++		fp = next;
++	}
++}
++
+ static void
+ fbcon_set_baud_rate(__unused int unit, __unused uint32_t baud_rate)
+ {

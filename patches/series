@@ -16,3 +16,4 @@
 0016-polaris-progress.patch
 0017-polaris-post-mmu.patch
 0018-polaris-panic-to-panel.patch
+0019-polaris-abort-trace.patch
