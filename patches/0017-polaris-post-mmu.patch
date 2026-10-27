@@ -1,0 +1,251 @@
+diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -226,7 +226,7 @@
+  *  3 SP_EL1 set       7 KVA bootstrap map built
+  */
+ .macro POLARIS_MARK
+-	MOV64	x9, (0x9d400000 + (($0) * 400))
++	MOV64	x9, (0x9d400000 + ($0))
+ 	MOV64	x10, ($1)
+ 	mov	x11, #96
+ 9990:	mov	x12, #96
+@@ -547,7 +547,7 @@
+ 	.globl EXT(start_first_cpu)
+ LEXT(start_first_cpu)
+ 
+-	POLARIS_MARK 0, 0xff00ff00
++	POLARIS_MARK (0 * 400), 0xff00ff00
+ 
+ 	// Unlock the core for debugging
+ 	msr		OSLAR_EL1, xzr
+@@ -556,7 +556,7 @@
+ 	mov		x20, x0
+ 	mov		x21, #0
+ 
+-	POLARIS_MARK 1, 0xffff00ff
++	POLARIS_MARK (1 * 400), 0xffff00ff
+ 
+ 	// Set low reset vector before attempting any loads
+ 	adrp	x0, EXT(LowExceptionVectorBase)@page
+@@ -571,7 +571,7 @@
+ 	adrp	x25, EXT(bootstrap_pagetables)@page	// Get the start of the page tables
+ 	ldr		x26, [x20, BA_BOOT_FLAGS]			// Get the kernel boot flags
+ 
+-	POLARIS_MARK 2, 0xff00ffff
++	POLARIS_MARK (2 * 400), 0xff00ffff
+ 
+ 	// Clear the register that will be used to store the userspace thread pointer and CPU number.
+ 	// We may not actually be booting from ordinal CPU 0, so this register will be updated
+@@ -593,7 +593,7 @@
+ 
+ 	mov		sp, x0
+ 
+-	POLARIS_MARK 3, 0xffffff00
++	POLARIS_MARK (3 * 400), 0xffffff00
+ 
+ 	// Set up interrupt stack pointer
+ 	adrp	x0, EXT(intstack_top)@page			// Load top of irq stack
+@@ -609,7 +609,7 @@
+ 	add		lr, lr, x22							// Convert to KVA
+ 	sub		lr, lr, x23
+ 
+-	POLARIS_MARK 4, 0xff0000ff
++	POLARIS_MARK (4 * 400), 0xff0000ff
+ 
+ 	/*
+ 	 * Set up the bootstrap page tables with a single block entry for the V=P
+@@ -673,7 +673,7 @@
+ 	add		x22, x22, x18
+ 	add		x23, x23, x18
+ 
+-	POLARIS_MARK 5, 0xffff8000
++	POLARIS_MARK (5 * 400), 0xffff8000
+ 
+ 	/*
+ 	 * x0  - V=P virtual cursor
+@@ -707,13 +707,50 @@
+ 	/* create_bootstrap_mapping(vbase, pbase, num_ents, L1 table, freeptr) */
+ 	create_bootstrap_mapping x0,  x4,  x5, x1, x2, x6, x10, x11, x12, x13
+ 
+-	POLARIS_MARK 6, 0xff8000ff
++	POLARIS_MARK (6 * 400), 0xff8000ff
+ 
+ 	/* Setup the KVA bootstrap mapping */
+ 	lsr		x5,  x24, #(ARM_TT_L2_SHIFT)
+ 	create_bootstrap_mapping x14, x15, x5, x3, x2, x9, x10, x11, x12, x13
+ 
+-	POLARIS_MARK 7, 0xffffffff
++	POLARIS_MARK (7 * 400), 0xffffffff
++
++	/*
++	 * Keep the splash framebuffer addressable once the MMU is on.
++	 *
++	 * The bootstrap tables only cover [phys_base, phys_base + mem_size), and
++	 * on this board that begins at 4 GB while the panel sits at 0x9d400000.
++	 * Every mark below, and the fault reporter itself, writes that address;
++	 * without an entry of their own they take a translation fault the moment
++	 * SCTLR.M is set, and a fault taken by the code whose only job is to
++	 * report faults is silent -- indistinguishable from a hang.
++	 *
++	 * One more L2 page fits: BOOTSTRAP_TABLE_SIZE is eight, two L1 pages plus
++	 * two L2 per mapping use six.  V=P occupies L1[4..], so L1[2] (VA
++	 * 0x80000000..0xBFFFFFFF) is free and 0x9d400000 lands in L2[0xEA].
++	 * Strongly ordered device memory, so a mark becomes visible without any
++	 * cache maintenance.
++	 */
++	mov		x6, x2				// take a free L2 page
++	add		x2, x2, PGBYTES
++	mov		x7, x6
++	mov		x8, #(PGBYTES / 16)
++1:	stp		xzr, xzr, [x7], #16
++	subs	x8, x8, #1
++	b.ne	1b
++	orr		x9, x6, #3			// L1: table descriptor (type | valid)
++	str		x9, [x1, #(2 * TTE_SHIFT)]	// L1[2]
++	MOV64	x10, (0x9d400000)
++	MOV64	x13, (0x40d)			// valid | AF | attrindx 3 (device)
++	orr		x10, x10, x13
++	mov		x11, #(0xEA * TTE_SHIFT)
++	add		x11, x11, x6
++	mov		x12, #5			// 10 MB, the panel needs 8.9
++	mov		x14, #(ARM_TT_L2_SIZE)
++1:	str		x10, [x11], #(1 << TTE_SHIFT)
++	add		x10, x10, x14
++	subs	x12, x12, #1
++	b.ne	1b
+ 
+ 	/* Ensure TTEs are visible */
+ 	dsb		ish
+@@ -868,14 +905,15 @@
+ 	MSR_SCTLR_EL1_X0
+ 	isb		sy
+ 
+-	MOV64	x1, SCTLR_EL1_DEFAULT
+-#if HAS_APPLE_PAC
+-	orr		x1, x1, #(SCTLR_PACIB_ENABLED)
+-	MOV64	x2, SCTLR_JOP_KEYS_ENABLED
+-	orr		x1, x1, x2
+-#endif /* HAS_APPLE_PAC */
+-	cmp		x0, x1
+-	bne		.
++	/*
++	 * Upstream asserts here that SCTLR_EL1 reads back what was written.
++	 * That holds on Apple silicon, where every bit of SCTLR_EL1_DEFAULT is
++	 * either writable or RES1.  On SDM845 several are RES0 or UNKNOWN, the
++	 * readback differs, and 'bne .' parked the boot CPU before it could say
++	 * a word -- the very silent hang this instrumentation exists to find.
++	 * The write is proved by the next instruction fetching from a KVA.
++	 */
++	POLARIS_MARK (120 * 4320), 0xff008000	// MMU on
+ 
+ #if (!CONFIG_KERNEL_INTEGRITY || (CONFIG_KERNEL_INTEGRITY && !defined(KERNEL_INTEGRITY_WT)))
+ 	/* Watchtower
+diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -160,6 +160,13 @@
+ SECURITY_READ_ONLY_LATE(bool) serial_console_enabled = false;
+ 
+ /*
++ * POLARIS bring-up instrumentation: paints one cell of the progress grid that
++ * start.s begins.  Lives in pe_serial.c because the framebuffer geometry and
++ * the physical base are already there.
++ */
++extern void polaris_boot_mark(unsigned int slot, unsigned int colour);
++
++/*
+  * Forward definition
+  */
+ void arm_init(boot_args * args);
+@@ -312,6 +319,9 @@
+ 	uint64_t        xmaxmem;
+ 	thread_t        thread;
+ 
++	/* C code is running: everything start.s set up worked. */
++	polaris_boot_mark(9, 0xff800000u);
++
+ 	arm_slide_rebase_and_sign_image();
+ 
+ 	/* If kernel integrity is supported, use a constant copy of the boot args. */
+@@ -326,6 +336,7 @@
+ #endif /* defined(HAS_APPLE_PAC) */
+ 
+ 	PE_init_platform(FALSE, args); /* Get platform expert set up */
++	polaris_boot_mark(10, 0xff808080u);
+ 
+ #if __arm64__
+ 	wfe_timeout_configure();
+@@ -488,6 +499,9 @@
+ 	__builtin_arm_wsr("pan", 1);
+ #endif  /* __ARM_PAN_AVAILABLE__ */
+ 
++	/* Past boot_args, device tree and the platform expert; pmap is next. */
++	polaris_boot_mark(11, 0xff000080u);
++
+ 	arm_vm_init(xmaxmem, args);
+ 
+ 	if (debug_boot_arg) {
+diff --git a/osfmk/arm/arm_vm_init.c b/osfmk/arm/arm_vm_init.c
+--- a/osfmk/arm/arm_vm_init.c
++++ b/osfmk/arm/arm_vm_init.c
+@@ -400,6 +400,8 @@
+ 	size_t length;
+ } MemoryMapFileInfo;
+ 
++/* POLARIS bring-up: paints a cell of the progress grid started in start.s. */
++extern void polaris_boot_mark(unsigned int slot, unsigned int colour);
+ 
+ void
+ arm_vm_init(uint64_t memory_size, boot_args * args)
+@@ -607,6 +609,13 @@
+ 		*(tte + 3) = pa_to_tte((ptp_phys + 0xC00)) | ARM_TTE_TYPE_TABLE;
+ 	}
+ 
++	/*
++	 * Last moment the panel is reachable: set_mmu_ttb() below points TTBR0 at
++	 * the kernel pmap, which does not map the identity range these marks use.
++	 * Seeing this cell means pmap_bootstrap() and arm_vm_prot_init() finished.
++	 */
++	polaris_boot_mark(12, 0xff800080u);
++
+ 	set_mmu_ttb(cpu_ttep);
+ 	set_mmu_ttb_alternate(cpu_ttep);
+ 	flush_mmu_tlb();
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -936,6 +936,33 @@
+ 	fbcon_newline();
+ }
+ 
++/*
++ * POLARIS: paint one bring-up progress cell from C.
++ *
++ * start.s lays out the same 96x96 grid: slots 0-7 fill the first row, 8 and up
++ * the second.  Writes go to the physical address, not through fbcon_base,
++ * because they have to work from the first C instruction -- long before
++ * pmap_init() makes ml_io_map() possible.  That only holds until arm_vm_init()
++ * installs the kernel pmap and drops the identity mapping, so callers must be
++ * above that point.
++ */
++void
++polaris_boot_mark(unsigned int slot, unsigned int colour)
++{
++	uint32_t x = (slot % 8u) * 100u;
++	uint32_t y = (slot / 8u) * 120u;
++	volatile uint32_t *line =
++	    (volatile uint32_t *)(FBCON_BASE + y * FBCON_STRIDE + x * 4);
++
++	for (uint32_t r = 0; r < 96; r++) {
++		for (uint32_t c = 0; c < 96; c++) {
++			line[c] = colour;
++		}
++		line += FBCON_STRIDE / 4;
++	}
++	__asm__ volatile ("dsb sy" ::: "memory");
++}
++
+ static void
+ fbcon_set_baud_rate(__unused int unit, __unused uint32_t baud_rate)
+ {

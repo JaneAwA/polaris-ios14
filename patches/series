@@ -14,3 +14,4 @@
 0014-sweet-polaris-fbcon.patch
 0015-polaris-early-probe.patch
 0016-polaris-progress.patch
+0017-polaris-post-mmu.patch
