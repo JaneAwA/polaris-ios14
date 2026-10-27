@@ -64,7 +64,7 @@ diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
  
  	/*
  	 * x0  - V=P virtual cursor
-@@ -707,13 +707,50 @@
+@@ -707,13 +707,46 @@
  	/* create_bootstrap_mapping(vbase, pbase, num_ents, L1 table, freeptr) */
  	create_bootstrap_mapping x0,  x4,  x5, x1, x2, x6, x10, x11, x12, x13
  
@@ -88,36 +88,32 @@ diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
 +	 * SCTLR.M is set, and a fault taken by the code whose only job is to
 +	 * report faults is silent -- indistinguishable from a hang.
 +	 *
-+	 * One more L2 page fits: BOOTSTRAP_TABLE_SIZE is eight, two L1 pages plus
-+	 * two L2 per mapping use six.  V=P occupies L1[4..], so L1[2] (VA
-+	 * 0x80000000..0xBFFFFFFF) is free and 0x9d400000 lands in L2[0xEA].
-+	 * Strongly ordered device memory, so a mark becomes visible without any
-+	 * cache maintenance.
++	 * Pages are 16 KB here, so one L1 slot spans 64 GB and one L2 block spans
++	 * 32 MB.  VA 0x9d400000 therefore shares L1[0] with the V=P mapping that
++	 * starts at phys_base, which already has an L2 table hanging off it; the
++	 * slot for 0x9d400000 (L2 index 78) sits below the V=P entries at 128+,
++	 * so the panel can be described by a single block in that table, with no
++	 * extra page and no cache maintenance (device memory is uncached).
 +	 */
-+	mov		x6, x2				// take a free L2 page
-+	add		x2, x2, PGBYTES
-+	mov		x7, x6
-+	mov		x8, #(PGBYTES / 16)
-+1:	stp		xzr, xzr, [x7], #16
-+	subs	x8, x8, #1
-+	b.ne	1b
-+	orr		x9, x6, #3			// L1: table descriptor (type | valid)
-+	str		x9, [x1, #(2 * TTE_SHIFT)]	// L1[2]
 +	MOV64	x10, (0x9d400000)
++	and		x12, x10, #(ARM_TT_L1_INDEX_MASK)
++	lsr		x12, x12, #(ARM_TT_L1_SHIFT)
++	lsl		x12, x12, #(TTE_SHIFT)
++	ldr		x9, [x1, x12]			// the V=P L1 entry covering 0x9d400000
++	and		x9, x9, #(ARM_TTE_TABLE_MASK)
++	cbz		x9, 2f				// no V=P table there: leave it unmapped
++	and		x11, x10, #(ARM_TT_L2_INDEX_MASK)
++	lsr		x11, x11, #(ARM_TT_L2_SHIFT)
++	lsl		x11, x11, #(TTE_SHIFT)
++	add		x9, x9, x11			// L2 slot for 0x9d400000
 +	MOV64	x13, (0x40d)			// valid | AF | attrindx 3 (device)
 +	orr		x10, x10, x13
-+	mov		x11, #(0xEA * TTE_SHIFT)
-+	add		x11, x11, x6
-+	mov		x12, #5			// 10 MB, the panel needs 8.9
-+	mov		x14, #(ARM_TT_L2_SIZE)
-+1:	str		x10, [x11], #(1 << TTE_SHIFT)
-+	add		x10, x10, x14
-+	subs	x12, x12, #1
-+	b.ne	1b
++	str		x10, [x9]			// 32 MB block, the panel needs 8.9
++2:
  
  	/* Ensure TTEs are visible */
  	dsb		ish
-@@ -868,16 +905,14 @@
+@@ -868,16 +901,14 @@
  	MSR_SCTLR_EL1_X0
  	isb		sy
  
