@@ -260,9 +260,9 @@ diff --git a/bsd/conf/files b/bsd/conf/files
 -bsd/miscfs/mockfs/mockfs_fsnode.c	optional mockfs
 -bsd/miscfs/mockfs/mockfs_vfsops.c	optional mockfs
 -bsd/miscfs/mockfs/mockfs_vnops.c	optional mockfs
-+bsd/miscfs/mockfs/mockfs_fsnode.c
-+bsd/miscfs/mockfs/mockfs_vfsops.c
-+bsd/miscfs/mockfs/mockfs_vnops.c
++bsd/miscfs/mockfs/mockfs_fsnode.c		standard
++bsd/miscfs/mockfs/mockfs_vfsops.c		standard
++bsd/miscfs/mockfs/mockfs_vnops.c		standard
  
  bsd/miscfs/routefs/routefs_ops.c	optional routefs
  
