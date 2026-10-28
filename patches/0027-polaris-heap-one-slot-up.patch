@@ -25,8 +25,46 @@ diff --git a/osfmk/arm/pmap.h b/osfmk/arm/pmap.h
 diff --git a/osfmk/arm/pmap.c b/osfmk/arm/pmap.c
 --- a/osfmk/arm/pmap.c
 +++ b/osfmk/arm/pmap.c
-@@ -5146,6 +5146,23 @@
+@@ -5100,7 +5100,18 @@
+ #endif
+ 
+ 	if (region_select == 0) {
+-#if     (__ARM_VMSA__ == 7)
++#if defined(ARM64_BOARD_CONFIG_POLARIS) && defined(ARM_LARGE_MEMORY)
++		/*
++		 * With ARM_LARGE_MEMORY the low globals, the kernel image and the
++		 * V=P aliases of everything pmap_bootstrap() carves out of
++		 * avail_start share the first L1 slot, so the whole slot has to be
++		 * kept away from the VM.  That is the same region the KTRR branch
++		 * above reserves, and it is what keeps the heap from being placed
++		 * on top of the page tables and the vm_page array.
++		 */
++		*startp = LOW_GLOBAL_BASE_ADDRESS & ~ARM_TT_L2_OFFMASK;
++		*size = ((KERNEL_PMAP_HEAP_RANGE_START - *startp) & ~PAGE_MASK);
++#elif   (__ARM_VMSA__ == 7)
+ 		*startp = gVirtBase & 0xFFC00000;
+ 		*size = ((virtual_space_start - (gVirtBase & 0xFFC00000)) + ~0xFFC00000) & 0xFFC00000;
+ #else
+@@ -5121,6 +5132,14 @@
+ 		ret = TRUE;
  	}
+ #if     (__ARM_VMSA__ > 7)
++#if defined(ARM64_BOARD_CONFIG_POLARIS) && defined(ARM_LARGE_MEMORY)
++	/*
++	 * Region 0 above already covers the low globals and everything else in
++	 * the static window, so regions 2 and 3 would only overlap it.  Region 3
++	 * would in fact be empty (VM_MIN_KERNEL_ADDRESS == LOW_GLOBAL_BASE_ADDRESS
++	 * here) and a zero length region makes kmem_init() panic.
++	 */
++#else
+ 	/* We need to reserve a range that is at least the size of an L2 block mapping for the low globals */
+ 	if (!TEST_PAGE_SIZE_4K) {
+ 		low_global_vr_mask = 0xFFFFFFFFFE000000;
+@@ -5144,8 +5163,24 @@
+ 		*size = LOW_GLOBAL_BASE_ADDRESS - *startp;
+ 		ret = TRUE;
+ 	}
++#endif /* POLARIS && ARM_LARGE_MEMORY */
  #endif
  #endif
 +#if defined(ARM64_BOARD_CONFIG_POLARIS)
@@ -37,10 +75,8 @@ diff --git a/osfmk/arm/pmap.c b/osfmk/arm/pmap.c
 +	 *   kmem_init(0xfffffe0009084000,0xfffffe8fffffc000):
 +	 *       vm_map_enter(0xfffffe0000000000,0x0) error 0x4
 +	 *
-+	 * Region 3 came out empty because ARM_LARGE_MEMORY puts the low globals at
-+	 * VM_MIN_KERNEL_ADDRESS itself, so the gap it is meant to reserve did not
-+	 * exist.  pmap.h now starts the heap one L1 slot higher, which makes the
-+	 * region real again -- but never report an empty range in any case.
++	 * That is what region 3 used to do on this board.  It is compiled out
++	 * above, but never hand kmem_init() an empty range from here either.
 +	 */
 +	if (ret && *size == 0) {
 +		ret = FALSE;
