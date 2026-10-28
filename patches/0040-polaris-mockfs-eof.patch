@@ -1,0 +1,123 @@
+diff --git a/bsd/miscfs/mockfs/mockfs_vnops.c b/bsd/miscfs/mockfs/mockfs_vnops.c
+--- a/bsd/miscfs/mockfs/mockfs_vnops.c
++++ b/bsd/miscfs/mockfs/mockfs_vnops.c
+@@ -53,6 +53,11 @@
+ int mockfs_reclaim(__unused struct vnop_reclaim_args * ap);
+ int mockfs_blockmap(struct vnop_blockmap_args * ap);
+ 
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++extern void polaris_note(const char *tag, uint64_t a, uint64_t b, uint64_t c);
++static int polaris_blockmap_notes;
++#endif
++
+ /*
+  * struct vnop_lookup_args {
+  *   struct vnodeop_desc *a_desc; // We don't care about this (for now)
+@@ -392,12 +397,24 @@
+ 	 *   This also means that their request should always be contiguous, so the run calculation is easy!
+ 	 */
+ 	if (vp->v_type == VREG) {
++		/*
++		 * POLARIS: reading the last cluster of a file is not an error.  UBC
++		 * fetches the 32 byte Mach-O header of our "launchd" in whole
++		 * clusters, so the request legitimately runs past the end of the
++		 * device.  Apple's code panics here, which turned the very first
++		 * exec into a dead machine; report the shorter run instead and let
++		 * the caller read what actually exists.
++		 */
++		if (foffset < 0 || (uint64_t)foffset >= fsnode->size) {
++			*run = 0;
++			return 0;
++		}
+ 		*bpn = foffset / blksize;
+-		*run = fsnode->size - foffset;
+-
+-		if (ap->a_size > *run) {
+-			/* We've been asked for more data than the backing device can provide; we're done. */
+-			panic("mockfs_blockmap was asked for a region that extended past the end of the backing device");
++		*run = (size_t)(fsnode->size - (uint64_t)foffset);
++		if (ap->a_size > *run && polaris_blockmap_notes < 4) {
++			polaris_blockmap_notes++;
++			polaris_note("MB", (uint64_t)foffset, (uint64_t)ap->a_size,
++			    fsnode->size);
+ 		}
+ 	} else {
+ 		rvalue = ENOTSUP;
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -427,8 +427,14 @@
+  * Page aligned on purpose: this array *is* the md0 device, and memdev
+  * addresses a memory device by page number, so a misaligned array would
+  * shift every read by the offset inside the page.
++ *
++ * The Mach-O is 2 KB, but the device is 16 KB: UBC reads the 32 byte header
++ * in whole clusters, and a device that is smaller than one cluster makes the
++ * very first read run off the end.  The tail is zero filled by the compiler,
++ * and the Mach-O header still describes exactly the segments it described
++ * before.
+  */
+-static const unsigned char polaris_root_image[2048]
++static const unsigned char polaris_root_image[16384]
+     __attribute__((aligned(4096), used)) = {
+ 	0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+ 	0x02, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0xf8, 0x00, 0x00, 0x00,
+@@ -1140,7 +1146,7 @@
+ 	 * memdev takes the base as a page number and, with phys == 0, treats it as
+ 	 * a kernel virtual address, which is exactly what we have: mockfs reads
+ 	 * through cluster_read -> strategy -> mdevstrategy, which bcopy()s straight
+-	 * out of the kernel image.  One page is enough for the whole Mach-O.
++	 * out of the kernel image.
+ 	 */
+ 	{
+ 		dev_t polaris_md = mdevadd(0,
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -180,6 +180,10 @@
+ 
+ extern boolean_t vm_darkwake_mode;
+ 
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++extern void polaris_note(const char *tag, uint64_t a, uint64_t b, uint64_t c);
++#endif
++
+ extern int bootarg_execfailurereports; /* bsd_init.c */
+ boolean_t unentitled_ios_sim_launch = FALSE;
+ 
+@@ -6440,7 +6444,21 @@
+ 	 */
+ 	set_security_token(p);
+ 
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	{
++		int polaris_err = execve(p, &init_exec_args, retval);
++
++		/*
++		 * Reaching here at all means the exec failed: on success the thread
++		 * returns to user mode and never comes back through this frame.
++		 */
++		polaris_note("X5", (uint64_t)(int64_t)polaris_err,
++		    (uint64_t)(int64_t)retval[0], (uint64_t)(int64_t)retval[1]);
++		return polaris_err;
++	}
++#else
+ 	return execve(p, &init_exec_args, retval);
++#endif
+ }
+ 
+ static const char * init_programs[] = {
+@@ -6492,6 +6510,13 @@
+ 	mach_vm_size_t map_page_size = vm_map_page_size(map);
+ 
+ 	(void) mach_vm_allocate_kernel(map, &scratch_addr, map_page_size, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	/*
++	 * The argv block is built with copyout() into this page, so if it is 0 the
++	 * copyout faults at address 0 and the init exec never happens.
++	 */
++	polaris_note("X4", (uint64_t)scratch_addr, (uint64_t)map_page_size, 0);
++#endif
+ #if CONFIG_MEMORYSTATUS
+ 	(void) memorystatus_init_at_boot_snapshot();
+ #endif /* CONFIG_MEMORYSTATUS */
