@@ -32,3 +32,4 @@
 0032-polaris-iokit-liveness.patch
 0033-polaris-nail-max-cpus.patch
 0034-polaris-pthread-kext-substitute.patch
+0035-polaris-aes-null-guards.patch

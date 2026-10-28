@@ -1,0 +1,280 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -402,6 +402,10 @@
+ extern thread_t cloneproc(task_t, coalition_t, proc_t, int, int);
+ extern int      (*mountroot)(void);
+ 
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++extern void polaris_note(const char *tag, uint64_t a, uint64_t b, uint64_t c);
++#endif
++
+ LCK_ATTR_DECLARE(proc_lck_attr, 0, 0);
+ LCK_GRP_DECLARE(proc_lck_grp, "proc");
+ LCK_GRP_DECLARE(proc_slock_grp, "proc-slock");
+@@ -791,6 +795,9 @@
+ 	aio_init();
+ 
+ 	pthread_init();
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	polaris_note("D1", 0, 0, 0);
++#endif
+ 	/* POSIX Shm and Sem */
+ 	bsd_init_kprintf("calling pshm_cache_init\n");
+ 	pshm_cache_init();
+@@ -816,6 +823,9 @@
+ 	socketinit();
+ 	bsd_init_kprintf("calling domaininit\n");
+ 	domaininit();
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	polaris_note("D2", 0, 0, 0);
++#endif
+ 	iptap_init();
+ #if FLOW_DIVERT
+ 	flow_divert_init();
+@@ -855,6 +865,9 @@
+ 
+ 	bsd_init_kprintf("calling bsd_autoconf\n");
+ 	bsd_autoconf();
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	polaris_note("D3", 0, 0, 0);
++#endif
+ 
+ #if CONFIG_DTRACE
+ 	dtrace_postinit();
+@@ -921,6 +934,9 @@
+ 	inittodr(0);
+ 
+ 	/* Mount the root file system. */
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	polaris_note("D4", 0, 0, 0);
++#endif
+ 	while (TRUE) {
+ 		int err;
+ 
+diff --git a/libkern/crypto/corecrypto_aes.c b/libkern/crypto/corecrypto_aes.c
+--- a/libkern/crypto/corecrypto_aes.c
++++ b/libkern/crypto/corecrypto_aes.c
+@@ -35,7 +35,14 @@
+ aes_rval
+ aes_encrypt_key(const unsigned char *key, int key_len, aes_encrypt_ctx cx[1])
+ {
+-	const struct ccmode_cbc *cbc = g_crypto_funcs->ccaes_cbc_encrypt;
++	const struct ccmode_cbc *cbc = g_crypto_funcs ? g_crypto_funcs->ccaes_cbc_encrypt : NULL;
++
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	/* kextless boot: nothing ever registers com.apple.kec.corecrypto. */
++	if (cbc == NULL) {
++		return aes_error;
++	}
++#endif
+ 
+ 	/* Make sure the context size for the mode fits in the one we have */
+ 	if (cbc->size > sizeof(aes_encrypt_ctx)) {
+@@ -49,7 +56,13 @@
+ aes_encrypt_cbc(const unsigned char *in_blk, const unsigned char *in_iv, unsigned int num_blk,
+     unsigned char *out_blk, aes_encrypt_ctx cx[1])
+ {
+-	const struct ccmode_cbc *cbc = g_crypto_funcs->ccaes_cbc_encrypt;
++	const struct ccmode_cbc *cbc = g_crypto_funcs ? g_crypto_funcs->ccaes_cbc_encrypt : NULL;
++
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	if (cbc == NULL) {
++		return aes_error;
++	}
++#endif
+ 	cccbc_iv_decl(cbc->block_size, ctx_iv);
+ 
+ 	int rc = cccbc_set_iv(cbc, ctx_iv, in_iv);
+@@ -72,7 +85,13 @@
+ aes_rval
+ aes_decrypt_key(const unsigned char *key, int key_len, aes_decrypt_ctx cx[1])
+ {
+-	const struct ccmode_cbc *cbc = g_crypto_funcs->ccaes_cbc_decrypt;
++	const struct ccmode_cbc *cbc = g_crypto_funcs ? g_crypto_funcs->ccaes_cbc_decrypt : NULL;
++
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	if (cbc == NULL) {
++		return aes_error;
++	}
++#endif
+ 
+ 	/* Make sure the context size for the mode fits in the one we have */
+ 	if (cbc->size > sizeof(aes_decrypt_ctx)) {
+@@ -86,7 +105,13 @@
+ aes_decrypt_cbc(const unsigned char *in_blk, const unsigned char *in_iv, unsigned int num_blk,
+     unsigned char *out_blk, aes_decrypt_ctx cx[1])
+ {
+-	const struct ccmode_cbc *cbc = g_crypto_funcs->ccaes_cbc_decrypt;
++	const struct ccmode_cbc *cbc = g_crypto_funcs ? g_crypto_funcs->ccaes_cbc_decrypt : NULL;
++
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	if (cbc == NULL) {
++		return aes_error;
++	}
++#endif
+ 	cccbc_iv_decl(cbc->block_size, ctx_iv);
+ 
+ 	int rc = cccbc_set_iv(cbc, ctx_iv, in_iv);
+@@ -134,7 +159,7 @@
+ aes_rval
+ aes_encrypt_key_gcm(const unsigned char *key, int key_len, ccgcm_ctx *ctx)
+ {
+-	const struct ccmode_gcm *gcm = g_crypto_funcs->ccaes_gcm_encrypt;
++	const struct ccmode_gcm *gcm = (g_crypto_funcs ? g_crypto_funcs->ccaes_gcm_encrypt : NULL);
+ 	if (!gcm) {
+ 		return aes_error;
+ 	}
+@@ -145,7 +170,7 @@
+ aes_rval
+ aes_encrypt_key_with_iv_gcm(const unsigned char *key, int key_len, const unsigned char *in_iv, ccgcm_ctx *ctx)
+ {
+-	const struct ccmode_gcm *gcm = g_crypto_funcs->ccaes_gcm_encrypt;
++	const struct ccmode_gcm *gcm = (g_crypto_funcs ? g_crypto_funcs->ccaes_gcm_encrypt : NULL);
+ 	if (!gcm) {
+ 		return aes_error;
+ 	}
+@@ -156,7 +181,7 @@
+ aes_rval
+ aes_encrypt_set_iv_gcm(const unsigned char *in_iv, unsigned int len, ccgcm_ctx *ctx)
+ {
+-	const struct ccmode_gcm *gcm = g_crypto_funcs->ccaes_gcm_encrypt;
++	const struct ccmode_gcm *gcm = (g_crypto_funcs ? g_crypto_funcs->ccaes_gcm_encrypt : NULL);
+ 	if (!gcm) {
+ 		return aes_error;
+ 	}
+@@ -167,7 +192,7 @@
+ aes_rval
+ aes_encrypt_reset_gcm(ccgcm_ctx *ctx)
+ {
+-	const struct ccmode_gcm *gcm = g_crypto_funcs->ccaes_gcm_encrypt;
++	const struct ccmode_gcm *gcm = (g_crypto_funcs ? g_crypto_funcs->ccaes_gcm_encrypt : NULL);
+ 	if (!gcm) {
+ 		return aes_error;
+ 	}
+@@ -178,7 +203,7 @@
+ aes_rval
+ aes_encrypt_inc_iv_gcm(unsigned char *out_iv, ccgcm_ctx *ctx)
+ {
+-	const struct ccmode_gcm *gcm = g_crypto_funcs->ccaes_gcm_encrypt;
++	const struct ccmode_gcm *gcm = (g_crypto_funcs ? g_crypto_funcs->ccaes_gcm_encrypt : NULL);
+ 	if (!gcm) {
+ 		return aes_error;
+ 	}
+@@ -189,7 +214,7 @@
+ aes_rval
+ aes_encrypt_aad_gcm(const unsigned char *aad, unsigned int aad_bytes, ccgcm_ctx *ctx)
+ {
+-	const struct ccmode_gcm *gcm = g_crypto_funcs->ccaes_gcm_encrypt;
++	const struct ccmode_gcm *gcm = (g_crypto_funcs ? g_crypto_funcs->ccaes_gcm_encrypt : NULL);
+ 	if (!gcm) {
+ 		return aes_error;
+ 	}
+@@ -201,7 +226,7 @@
+ aes_encrypt_gcm(const unsigned char *in_blk, unsigned int num_bytes,
+     unsigned char *out_blk, ccgcm_ctx *ctx)
+ {
+-	const struct ccmode_gcm *gcm = g_crypto_funcs->ccaes_gcm_encrypt;
++	const struct ccmode_gcm *gcm = (g_crypto_funcs ? g_crypto_funcs->ccaes_gcm_encrypt : NULL);
+ 	if (!gcm) {
+ 		return aes_error;
+ 	}
+@@ -212,7 +237,7 @@
+ aes_rval
+ aes_encrypt_finalize_gcm(unsigned char *tag, size_t tag_bytes, ccgcm_ctx *ctx)
+ {
+-	const struct ccmode_gcm *gcm = g_crypto_funcs->ccaes_gcm_encrypt;
++	const struct ccmode_gcm *gcm = (g_crypto_funcs ? g_crypto_funcs->ccaes_gcm_encrypt : NULL);
+ 	if (!gcm) {
+ 		return aes_error;
+ 	}
+@@ -228,7 +253,7 @@
+ aes_rval
+ aes_decrypt_key_gcm(const unsigned char *key, int key_len, ccgcm_ctx *ctx)
+ {
+-	const struct ccmode_gcm *gcm = g_crypto_funcs->ccaes_gcm_decrypt;
++	const struct ccmode_gcm *gcm = (g_crypto_funcs ? g_crypto_funcs->ccaes_gcm_decrypt : NULL);
+ 	if (!gcm) {
+ 		return aes_error;
+ 	}
+@@ -239,7 +264,7 @@
+ aes_rval
+ aes_decrypt_key_with_iv_gcm(const unsigned char *key, int key_len, const unsigned char *in_iv, ccgcm_ctx *ctx)
+ {
+-	const struct ccmode_gcm *gcm = g_crypto_funcs->ccaes_gcm_decrypt;
++	const struct ccmode_gcm *gcm = (g_crypto_funcs ? g_crypto_funcs->ccaes_gcm_decrypt : NULL);
+ 	if (!gcm) {
+ 		return aes_error;
+ 	}
+@@ -250,7 +275,7 @@
+ aes_rval
+ aes_decrypt_set_iv_gcm(const unsigned char *in_iv, size_t len, ccgcm_ctx *ctx)
+ {
+-	const struct ccmode_gcm *gcm = g_crypto_funcs->ccaes_gcm_decrypt;
++	const struct ccmode_gcm *gcm = (g_crypto_funcs ? g_crypto_funcs->ccaes_gcm_decrypt : NULL);
+ 	if (!gcm) {
+ 		return aes_error;
+ 	}
+@@ -266,7 +291,7 @@
+ aes_rval
+ aes_decrypt_reset_gcm(ccgcm_ctx *ctx)
+ {
+-	const struct ccmode_gcm *gcm = g_crypto_funcs->ccaes_gcm_decrypt;
++	const struct ccmode_gcm *gcm = (g_crypto_funcs ? g_crypto_funcs->ccaes_gcm_decrypt : NULL);
+ 	if (!gcm) {
+ 		return aes_error;
+ 	}
+@@ -277,7 +302,7 @@
+ aes_rval
+ aes_decrypt_inc_iv_gcm(unsigned char *out_iv, ccgcm_ctx *ctx)
+ {
+-	const struct ccmode_gcm *gcm = g_crypto_funcs->ccaes_gcm_decrypt;
++	const struct ccmode_gcm *gcm = (g_crypto_funcs ? g_crypto_funcs->ccaes_gcm_decrypt : NULL);
+ 	if (!gcm) {
+ 		return aes_error;
+ 	}
+@@ -288,7 +313,7 @@
+ aes_rval
+ aes_decrypt_aad_gcm(const unsigned char *aad, unsigned int aad_bytes, ccgcm_ctx *ctx)
+ {
+-	const struct ccmode_gcm *gcm = g_crypto_funcs->ccaes_gcm_decrypt;
++	const struct ccmode_gcm *gcm = (g_crypto_funcs ? g_crypto_funcs->ccaes_gcm_decrypt : NULL);
+ 	if (!gcm) {
+ 		return aes_error;
+ 	}
+@@ -300,7 +325,7 @@
+ aes_decrypt_gcm(const unsigned char *in_blk, unsigned int num_bytes,
+     unsigned char *out_blk, ccgcm_ctx *ctx)
+ {
+-	const struct ccmode_gcm *gcm = g_crypto_funcs->ccaes_gcm_decrypt;
++	const struct ccmode_gcm *gcm = (g_crypto_funcs ? g_crypto_funcs->ccaes_gcm_decrypt : NULL);
+ 	if (!gcm) {
+ 		return aes_error;
+ 	}
+@@ -311,7 +336,7 @@
+ aes_rval
+ aes_decrypt_finalize_gcm(unsigned char *tag, size_t tag_bytes, ccgcm_ctx *ctx)
+ {
+-	const struct ccmode_gcm *gcm = g_crypto_funcs->ccaes_gcm_decrypt;
++	const struct ccmode_gcm *gcm = (g_crypto_funcs ? g_crypto_funcs->ccaes_gcm_decrypt : NULL);
+ 	if (!gcm) {
+ 		return aes_error;
+ 	}
+@@ -327,7 +352,7 @@
+ size_t
+ aes_encrypt_get_ctx_size_gcm(void)
+ {
+-	const struct ccmode_gcm *gcm = g_crypto_funcs->ccaes_gcm_encrypt;
++	const struct ccmode_gcm *gcm = (g_crypto_funcs ? g_crypto_funcs->ccaes_gcm_encrypt : NULL);
+ 	if (!gcm) {
+ 		return 0;
+ 	}
+@@ -337,7 +362,7 @@
+ size_t
+ aes_decrypt_get_ctx_size_gcm(void)
+ {
+-	const struct ccmode_gcm *gcm = g_crypto_funcs->ccaes_gcm_decrypt;
++	const struct ccmode_gcm *gcm = (g_crypto_funcs ? g_crypto_funcs->ccaes_gcm_decrypt : NULL);
+ 	if (!gcm) {
+ 		return 0;
+ 	}
