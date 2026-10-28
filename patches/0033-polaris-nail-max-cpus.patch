@@ -1,0 +1,43 @@
+diff --git a/osfmk/arm64/machine_routines.c b/osfmk/arm64/machine_routines.c
+--- a/osfmk/arm64/machine_routines.c
++++ b/osfmk/arm64/machine_routines.c
+@@ -463,6 +463,23 @@
+ 	}
+ 
+ 	lockdown_done = 1;
++
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	/*
++	 * On Apple hardware the CPU topology is published by an IOCPU nub (or by
++	 * AppleARMSMP on Apple silicon) once the CPU drivers match and start.
++	 * Nothing on this board ever matches those drivers, so nobody would call
++	 * ml_set_max_cpus() and the very first ml_wait_max_cpus() -- issued from
++	 * kperf_init_early() right after this checkpoint -- would sleep forever
++	 * waiting for a flag that can never be set.
++	 *
++	 * machine_info.max_cpus is already final at this point (it is derived
++	 * from the device tree topology), and startup.c requires max_cpus to be
++	 * nailed down by the time PE_lockdown_iokit() finishes, so publish it
++	 * here instead of waiting for a driver that does not exist.
++	 */
++	ml_set_max_cpus(machine_info.max_cpus);
++#endif /* ARM64_BOARD_CONFIG_POLARIS */
+ }
+ 
+ 
+diff --git a/osfmk/kperf/kperf.c b/osfmk/kperf/kperf.c
+--- a/osfmk/kperf/kperf.c
++++ b/osfmk/kperf/kperf.c
+@@ -85,6 +85,12 @@
+ 	 * accounted for.
+ 	 */
+ 	ml_wait_max_cpus();
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	{
++		extern void polaris_note(const char *tag, uint64_t a, uint64_t b, uint64_t c);
++		polaris_note("K3", 0, 0, 0);
++	}
++#endif
+ 
+ 	boolean_t found_kperf = FALSE;
+ 	char kperf_config_str[64];
