@@ -1,0 +1,91 @@
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -1749,6 +1749,8 @@
+ extern void polaris_console_rebind(void *va);
+ 
+ static vm_map_address_t polaris_console_va;
++static uint64_t polaris_console_l1;
++static uint64_t polaris_console_l2;
+ 
+ /*
+  * POLARIS: give the panel a home in the kernel's own tables.
+@@ -1775,17 +1777,35 @@
+ 	tt_entry_t *l1_tte, *l2_tte;
+ 
+ 	polaris_console_va = 0;
++	polaris_console_l1 = 0;
++	polaris_console_l2 = 0;
+ 	l1_tte = cpu_tte + ((va & ARM_TT_L1_INDEX_MASK) >> ARM_TT_L1_SHIFT);
++	polaris_console_l1 = *l1_tte;
+ 	if ((*l1_tte & ARM_TTE_VALID) == 0) {
+ 		return;         /* no L2 table over the aperture: stay on the raw address */
+ 	}
+-	l2_tte = (tt_entry_t *)phystokv(*l1_tte & ARM_TTE_TABLE_MASK);
++	/*
++	 * Do not go through phystokv() here.  arm_vm_physmap_init() has already
++	 * installed the ptov table, so phystokv() now answers with a physmap
++	 * address -- but the MMU is still on start.s's bootstrap tables, which
++	 * do not cover the aperture until TTBR0 is installed below.  Reading the
++	 * L2 entry there faults on an empty L1 slot.
++	 *
++	 * This table page was carved out of avail_start before the ptov table
++	 * existed, so it is reachable through the V=P window that start.s does
++	 * map, and the V=P formula is exactly what phystokv() used to return for
++	 * it.
++	 */
++	l2_tte = (tt_entry_t *)(uintptr_t)
++	    (((*l1_tte & ARM_TTE_TABLE_MASK) - gPhysBase) + gVirtBase);
+ 	l2_tte += (va & ARM_TT_L2_INDEX_MASK) >> ARM_TT_L2_SHIFT;
++	polaris_console_l2 = *l2_tte;
+ 	if (*l2_tte != ARM_TTE_EMPTY) {
+ 		return;         /* something already lives here */
+ 	}
+ 	*l2_tte = (fb_pa & ~(vm_map_address_t)ARM_TT_L2_OFFMASK) | 0x40d; /* valid | AF | attrindx 3 (device) */
+ 	__asm__ volatile("dsb sy" ::: "memory");
++	polaris_console_l2 = *l2_tte;
+ 	polaris_console_va = va;
+ 	polaris_console_rebind((void *)(uintptr_t)va);
+ }
+@@ -2138,28 +2158,31 @@
+ 	arm_vm_physmap_init(args);
+ 
+ #if defined(ARM64_BOARD_CONFIG_POLARIS)
+-	/* Do this while the bootstrap tables can still reach the framebuffer. */
++	/*
++	 * Last drawing through the identity map.  Slot 14 means "the MMU switch is
++	 * next": it has to land before the console is rebound, because after that
++	 * fbcon_base points at a kernel address the bootstrap tables do not cover.
++	 */
++	polaris_boot_mark(14, 0xffff8000u);
+ 	polaris_console_map_kernel(args);
+ #endif
+ 	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
+ 
+ 	ml_enable_monitor();
+ 
+-	/*
+-	 * Last point where the identity table still maps the panel: the next
+-	 * store to TTBR0 drops it.  polaris_console_map_kernel() has already
+-	 * pointed the console at a kernel mapping by now, so keep drawing.
+-	 */
+-	polaris_boot_mark(14, 0xffff8000u);
+-	/* No-op when the block mapping above worked; otherwise stop drawing. */
++	/* No-op once the console has a kernel mapping behind it. */
+ 	polaris_console_suspend();
+ 
+ 	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
+ 
+ 	flush_mmu_tlb();
+ #if defined(ARM64_BOARD_CONFIG_POLARIS)
+-	/* Running on the kernel's own tables with no identity map behind us. */
+-	polaris_note("S1", polaris_console_va, 0, 0);
++	/*
++	 * Running on the kernel's own tables with no identity map behind us.
++	 * First argument is where the console now lives (0 if the block mapping
++	 * was not installed), then the L1 entry and the L2 entry behind it.
++	 */
++	polaris_note("S1", polaris_console_va, polaris_console_l1, polaris_console_l2);
+ #endif
+ #if defined(HAS_VMSA_LOCK)
+ 	vmsa_lock();
