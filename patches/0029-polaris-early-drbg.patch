@@ -1,0 +1,99 @@
+diff --git a/osfmk/prng/prng_random.c b/osfmk/prng/prng_random.c
+--- a/osfmk/prng/prng_random.c
++++ b/osfmk/prng/prng_random.c
+@@ -286,7 +286,17 @@
+ 	assert(cpu != master_cpu);
+ 
+ 	if (!prng_ready) {
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++		/*
++		 * No provider will ever call initgen() here, so a secondary CPU
++		 * would be stuck with the master CPU's generator.  The early
++		 * DRBG keeps a single global instance anyway, so there is
++		 * nothing to install -- just do not take the primary one down.
++		 */
++		return;
++#else
+ 		panic("random_cpu_init: kernel prng has not been installed");
++#endif
+ 	}
+ 
+ 	prng_funcs.initgen(prng_ctx, cpu);
+@@ -296,6 +306,26 @@
+ void
+ read_random(void * buffer, u_int numbytes)
+ {
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	/*
++	 * prng_funcs is only ever populated by register_and_init_prng(), whose
++	 * sole caller is com.apple.kec.corecrypto.  This kernel has no such
++	 * kext, so prng_funcs stays all zeroes and the refresh() below would
++	 * branch to address zero:
++	 *
++	 *   Kernel instruction fetch abort at pc 0x0
++	 *   lr read_random+0x2c   (read_random calls prng_funcs.refresh)
++	 *
++	 * The NIST HMAC-SHA256 DRBG in this same file needs no external
++	 * provider, and arm_vm_init() has already forced early_random() to
++	 * seed it for the physmap slide -- so serve the request from there
++	 * until (if ever) a real provider registers itself.
++	 */
++	if (!prng_ready) {
++		read_erandom(buffer, numbytes);
++		return;
++	}
++#endif
+ 	prng_funcs.refresh(prng_ctx);
+ 	read_random_generate(buffer, numbytes);
+ }
+@@ -341,6 +371,17 @@
+ 	uint8_t seed[SHA256_DIGEST_LENGTH];
+ 	SHA256_CTX ctx;
+ 
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	/*
++	 * prng_funcs.reseed is null here (no corecrypto kext), and the early
++	 * DRBG does not expose a reseed hook.  Drop the entropy rather than
++	 * branch to zero: entropy-injection callers treat a failure as fatal.
++	 */
++	if (!prng_ready) {
++		return 0;
++	}
++#endif
++
+ 	/* hash the input to minimize the time we need to hold the lock */
+ 	SHA256_Init(&ctx);
+ 	SHA256_Update(&ctx, buffer, numbytes);
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -738,6 +738,9 @@
+ 	vm_kernel_addrperm_ext |= 1;
+ 	read_random(&vm_kernel_addrhash_salt, sizeof(vm_kernel_addrhash_salt));
+ 	read_random(&vm_kernel_addrhash_salt_ext, sizeof(vm_kernel_addrhash_salt_ext));
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	polaris_note("R1", vm_kernel_addrperm, buf_kernel_addrperm, 0);
++#endif
+ 
+ 	/* No changes to kernel text and rodata beyond this point. */
+ 	kernel_bootstrap_log("machine_lockdown");
+@@ -747,6 +750,9 @@
+ 	kernel_bootstrap_log("PE_lockdown_iokit");
+ 	PE_lockdown_iokit();
+ #endif
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	polaris_note("R2", 0, 0, 0);
++#endif
+ 	/*
+ 	 * max_cpus must be nailed down by the time PE_lockdown_iokit() finishes,
+ 	 * at the latest
+@@ -771,6 +777,9 @@
+ 	 *	Start the user bootstrap.
+ 	 */
+ #ifdef  MACH_BSD
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	polaris_note("R3", 0, 0, 0);
++#endif
+ 	bsd_init();
+ #endif
+ 
