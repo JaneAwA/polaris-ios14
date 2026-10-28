@@ -1,0 +1,80 @@
+diff --git a/osfmk/arm/pmap.h b/osfmk/arm/pmap.h
+--- a/osfmk/arm/pmap.h
++++ b/osfmk/arm/pmap.h
+@@ -193,7 +193,19 @@
+  * This indicates (roughly) where there is free space for the VM
+  * to use for the heap; this does not need to be precise.
+  */
+-#if defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
++#if defined(ARM_LARGE_MEMORY) && defined(ARM64_BOARD_CONFIG_POLARIS)
++/*
++ * On a large-memory kernel the low globals sit at VM_MIN_KERNEL_ADDRESS and the
++ * whole first L1 slot (64 GB) is the static window: the kernel image, the V=P
++ * aliases and every table pmap_bootstrap() carves out of avail_start.  If the
++ * heap were left to start at the first hole kmem_init() creates (VM_MIN + 32 MB)
++ * it would grow into those V=P mappings a few tens of megabytes later and start
++ * overwriting page tables under its own feet.  Shipping ARM_LARGE_MEMORY devices
++ * never see this because they all define KTRR, which takes the branch below;
++ * lift the heap a full L1 slot the same way.
++ */
++#define KERNEL_PMAP_HEAP_RANGE_START (VM_MIN_KERNEL_AND_KEXT_ADDRESS+ARM_TT_L1_SIZE)
++#elif defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
+ #if defined(ARM_LARGE_MEMORY)
+ #define KERNEL_PMAP_HEAP_RANGE_START (VM_MIN_KERNEL_AND_KEXT_ADDRESS+ARM_TT_L1_SIZE)
+ #else // ARM_LARGE_MEMORY
+diff --git a/osfmk/arm/pmap.c b/osfmk/arm/pmap.c
+--- a/osfmk/arm/pmap.c
++++ b/osfmk/arm/pmap.c
+@@ -5146,6 +5146,23 @@
+ 	}
+ #endif
+ #endif
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	/*
++	 * kmem_init() feeds every region straight to vm_map_enter(), which rejects
++	 * a zero length request with KERN_INVALID_ARGUMENT and panics on the spot:
++	 *
++	 *   kmem_init(0xfffffe0009084000,0xfffffe8fffffc000):
++	 *       vm_map_enter(0xfffffe0000000000,0x0) error 0x4
++	 *
++	 * Region 3 came out empty because ARM_LARGE_MEMORY puts the low globals at
++	 * VM_MIN_KERNEL_ADDRESS itself, so the gap it is meant to reserve did not
++	 * exist.  pmap.h now starts the heap one L1 slot higher, which makes the
++	 * region real again -- but never report an empty range in any case.
++	 */
++	if (ret && *size == 0) {
++		ret = FALSE;
++	}
++#endif /* ARM64_BOARD_CONFIG_POLARIS */
+ 	return ret;
+ }
+ 
+diff --git a/osfmk/vm/vm_init.c b/osfmk/vm/vm_init.c
+--- a/osfmk/vm/vm_init.c
++++ b/osfmk/vm/vm_init.c
+@@ -81,6 +81,10 @@
+ 
+ #include <vm/vm_protos.h>
+ 
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++extern void polaris_note(const char *tag, uint64_t a, uint64_t b, uint64_t c);
++#endif /* ARM64_BOARD_CONFIG_POLARIS */
++
+ const vm_offset_t vm_min_kernel_address = VM_MIN_KERNEL_AND_KEXT_ADDRESS;
+ const vm_offset_t vm_max_kernel_address = VM_MAX_KERNEL_ADDRESS;
+ 
+@@ -131,8 +135,14 @@
+ 
+ 	vm_mem_bootstrap_log("kmem_init");
+ 	kmem_init(start, end);
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	polaris_note("K1", start, end, 0);
++#endif /* ARM64_BOARD_CONFIG_POLARIS */
+ 
+ 	kernel_startup_initialize_upto(STARTUP_SUB_KMEM);
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	polaris_note("K2", 0, 0, 0);
++#endif /* ARM64_BOARD_CONFIG_POLARIS */
+ 
+ 	/*
+ 	 * Eat a random amount of kernel_map to fuzz subsequent heap, zone and
