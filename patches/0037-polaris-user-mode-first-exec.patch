@@ -1,0 +1,165 @@
+diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
+--- a/iokit/bsddev/IOKitBSDInit.cpp
++++ b/iokit/bsddev/IOKitBSDInit.cpp
+@@ -913,7 +913,19 @@
+ void
+ IOSecureBSDRoot(const char * rootName)
+ {
+-#if CONFIG_SECURE_BSD_ROOT
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	/*
++	 * POLARIS: nothing publishes an "IOPlatformExpert" service here -- that
++	 * normally comes from the AppleARMPlatformExpert kext, which we do not
++	 * have.  waitForMatchingService() would block for its full 30 second
++	 * timeout and then return NULL, and the very next statement
++	 * (matching->release() / pe->callPlatformFunction()) dereferences it.
++	 * The secure-root check only decides whether to throw the memory device
++	 * away, so skipping it is both safe and much faster.
++	 */
++	(void)rootName;
++	return;
++#elif CONFIG_SECURE_BSD_ROOT
+ 	IOReturn         result;
+ 	IOPlatformExpert *pe;
+ 	OSDictionary     *matching;
+diff --git a/bsd/miscfs/mockfs/mockfs_vfsops.c b/bsd/miscfs/mockfs/mockfs_vfsops.c
+--- a/bsd/miscfs/mockfs/mockfs_vfsops.c
++++ b/bsd/miscfs/mockfs/mockfs_vfsops.c
+@@ -97,6 +97,16 @@
+ 	 */
+ 	bzero(&memdev_info, sizeof(memdev_info));
+ 
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	/*
++	 * POLARIS: the backing store is a page of the kernel's own __DATA_CONST,
++	 * not a booter-reserved physical range.  pager_map_to_phys_contiguous()
++	 * would alias that physical page into userspace while the kernel is still
++	 * using it, which is not something the pmap is prepared to do.  Leave
++	 * mockfs_memory_backed FALSE so every read goes through the ordinary
++	 * cluster_read -> strategy -> memdev path instead.
++	 */
++#else
+ 	if (!VNOP_IOCTL(rvp, DKIOCGETMEMDEVINFO, (caddr_t)&memdev_info, 0, NULL)) {
+ 		/*
+ 		 * For the moment, we won't try to optimize when mi_phys is true.
+@@ -108,6 +118,7 @@
+ 			mockfs_mount_data->mockfs_memdev_size = memdev_info.mi_size;
+ 		}
+ 	}
++#endif
+ 
+ 	lck_mtx_init(&mockfs_mount_data->mockfs_mnt_mtx, &mockfs_mtx_grp, LCK_ATTR_NULL);
+ 
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -412,16 +412,24 @@
+  * carved out of this image.  mockfs serves it as /sbin/launchd (the whole
+  * "device" is the executable, which is exactly what mockfs is for).
+  *
+- * The payload is a hand-built arm64 Mach-O that does
++ * The payload is a hand-built static arm64 Mach-O whose _start does
+  *
+  *      write(1, "POLARIS USER OK\n", 16);
+- *      exit(0);
++ *      exit(42);
+  *
+- * so that one photo tells us whether we reached user mode at all.
++ * fd 1 is not open yet, so the write usually fails with EBADF; the exit is the
++ * real signal, because the kernel turns "pid 1 exited" into a panic.  One photo
++ * then tells us whether we reached user mode at all.
+  */
+ extern dev_t mdevadd(int devid, uint64_t base, unsigned int size, int phys);
+ 
+-static const unsigned char polaris_root_image[] = {
++/*
++ * Page aligned on purpose: this array *is* the md0 device, and memdev
++ * addresses a memory device by page number, so a misaligned array would
++ * shift every read by the offset inside the page.
++ */
++static const unsigned char polaris_root_image[2048]
++    __attribute__((aligned(4096), used)) = {
+ 	0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+ 	0x02, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0xf8, 0x00, 0x00, 0x00,
+ 	0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x19, 0x00, 0x00, 0x00,
+@@ -509,7 +517,7 @@
+ 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+ 	0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x80, 0xd2, 0xe1, 0x00, 0x00, 0x10,
+ 	0x02, 0x02, 0x80, 0xd2, 0x90, 0x00, 0x80, 0xd2, 0x01, 0x10, 0x00, 0xd4,
+-	0x00, 0x00, 0x80, 0xd2, 0x30, 0x00, 0x80, 0xd2, 0x01, 0x10, 0x00, 0xd4,
++	0x40, 0x05, 0x80, 0xd2, 0x30, 0x00, 0x80, 0xd2, 0x01, 0x10, 0x00, 0xd4,
+ 	0x50, 0x4f, 0x4c, 0x41, 0x52, 0x49, 0x53, 0x20, 0x55, 0x53, 0x45, 0x52,
+ 	0x20, 0x4f, 0x4b, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+ 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+@@ -1128,13 +1136,19 @@
+ 	 * Publish the built-in image as md0 before the root is looked for, so
+ 	 * that "rd=md0" resolves through mdevlookup() instead of waiting for an
+ 	 * IOMedia with Content=Apple_HFS that will never appear.
++	 *
++	 * memdev takes the base as a page number and, with phys == 0, treats it as
++	 * a kernel virtual address, which is exactly what we have: mockfs reads
++	 * through cluster_read -> strategy -> mdevstrategy, which bcopy()s straight
++	 * out of the kernel image.  One page is enough for the whole Mach-O.
+ 	 */
+ 	{
+ 		dev_t polaris_md = mdevadd(0,
+ 		    ((uint64_t)(uintptr_t)polaris_root_image) >> 12,
+-		    (unsigned int)(sizeof(polaris_root_image) >> 12), 0);
++		    (unsigned int)((sizeof(polaris_root_image) + 4095) >> 12), 0);
+ 		polaris_note("X0", (uint64_t)(uintptr_t)polaris_md,
+-		    sizeof(polaris_root_image), 0);
++		    (uint64_t)((uintptr_t)polaris_root_image & 0xfff),
++		    (uint64_t)sizeof(polaris_root_image));
+ 	}
+ #endif
+ 
+@@ -1177,6 +1191,9 @@
+ 	}
+ 
+ 	IOSecureBSDRoot(rootdevice);
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	polaris_note("X1B", 0, 0, 0);
++#endif
+ 
+ 	context.vc_thread = current_thread();
+ 	context.vc_ucred = kernproc->p_ucred;
+@@ -1184,8 +1201,17 @@
+ 
+ 	bsd_init_kprintf("calling VFS_ROOT\n");
+ 	/* Get the vnode for '/'.  Set fdp->fd_fd.fd_cdir to reference it. */
+-	if (VFS_ROOT(mountlist.tqh_first, &init_rootvnode, &context)) {
+-		panic("bsd_init: cannot find root vnode: %s", PE_boot_args());
++	{
++		int polaris_root_err;
++
++		polaris_root_err = VFS_ROOT(mountlist.tqh_first, &init_rootvnode, &context);
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++		polaris_note("X2A", (uint64_t)(uint64_t)polaris_root_err,
++		    (uint64_t)(uintptr_t)init_rootvnode, 0);
++#endif
++		if (polaris_root_err) {
++			panic("bsd_init: cannot find root vnode: %s", PE_boot_args());
++		}
+ 	}
+ 	(void)vnode_ref(init_rootvnode);
+ 	(void)vnode_put(init_rootvnode);
+@@ -1275,6 +1301,9 @@
+ 	 * switch the root vnode to point to it
+ 	 */
+ 	imageboot_type_t imageboot_type = imageboot_needed();
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	polaris_note("X2B", (uint64_t)imageboot_type, 0, 0);
++#endif
+ 	if (netboot == FALSE && imageboot_type) {
+ 		/*
+ 		 * An image was found.  No turning back: we're booted
+@@ -1303,6 +1332,9 @@
+ 		char mounthere[] = "/dev"; /* !const because of internal casting */
+ 
+ 		bsd_init_kprintf("calling devfs_kernel_mount\n");
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++		polaris_note("D5", 0, 0, 0);
++#endif
+ 		devfs_kernel_mount(mounthere);
+ 	}
+ #endif /* DEVFS */

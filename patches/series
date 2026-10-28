@@ -34,3 +34,4 @@
 0034-polaris-pthread-kext-substitute.patch
 0035-polaris-aes-null-guards.patch
 0036-polaris-mockfs-md0-root.patch
+0037-polaris-user-mode-first-exec.patch
