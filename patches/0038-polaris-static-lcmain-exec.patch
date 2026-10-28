@@ -1,0 +1,86 @@
+diff --git a/bsd/kern/mach_loader.c b/bsd/kern/mach_loader.c
+--- a/bsd/kern/mach_loader.c
++++ b/bsd/kern/mach_loader.c
+@@ -743,6 +743,70 @@
+  * "thread"==THREAD_NULL, do not make permament VM modifications,
+  * just preflight the parse.
+  */
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++/*
++ * POLARIS: find the entry point of a self-contained image.
++ *
++ * On arm64 the kernel refuses to run an MH_EXECUTE that does not carry an
++ * LC_LOAD_DYLINKER ("Make sure if we need dyld, we got it"), because dyld is
++ * normally the only thing that knows how to turn LC_MAIN's file offset into an
++ * address.  Our launchd placeholder is static, and it has to run precisely
++ * because there is no dyld here yet, so do what dyld would do: add the offset
++ * to __TEXT.
++ */
++static load_return_t
++polaris_static_entry(vm_offset_t image, struct mach_header *header, load_result_t *result)
++{
++	struct load_command *lc;
++	vm_offset_t lcp, lcend;
++	uint64_t text_vmaddr = 0;
++	uint64_t entryoff = 0;
++	boolean_t have_text = FALSE;
++	boolean_t have_main = FALSE;
++	uint32_t i, ncmds;
++
++	if (header->magic != MH_MAGIC_64) {
++		return LOAD_FAILURE;
++	}
++
++	ncmds = header->ncmds;
++	lcp = image + sizeof(struct mach_header_64);
++	lcend = lcp + header->sizeofcmds;
++
++	for (i = 0; i < ncmds; i++) {
++		lc = (struct load_command *)lcp;
++		if ((lc->cmdsize < sizeof(*lc)) || (lcp + lc->cmdsize > lcend)) {
++			return LOAD_BADMACHO;
++		}
++		if ((lc->cmd == LC_SEGMENT_64) && !have_text) {
++			struct segment_command_64 *sc = (struct segment_command_64 *)lc;
++
++			if ((sc->cmdsize >= sizeof(*sc)) && (sc->fileoff == 0)) {
++				text_vmaddr = sc->vmaddr;
++				have_text = TRUE;
++			}
++		} else if (lc->cmd == LC_MAIN) {
++			struct entry_point_command *ep = (struct entry_point_command *)lc;
++
++			if (ep->cmdsize < sizeof(*ep)) {
++				return LOAD_BADMACHO;
++			}
++			entryoff = ep->entryoff;
++			have_main = TRUE;
++		}
++		lcp += lc->cmdsize;
++	}
++
++	if (!have_text || !have_main) {
++		return LOAD_FAILURE;
++	}
++
++	result->entry_point = (user_addr_t)(text_vmaddr + entryoff);
++	result->needs_dynlinker = FALSE;
++	return LOAD_SUCCESS;
++}
++#endif /* ARM64_BOARD_CONFIG_POLARIS */
++
+ static
+ load_return_t
+ parse_machfile(
+@@ -1432,7 +1496,11 @@
+ 
+ 		/* Make sure if we need dyld, we got it */
+ 		if (result->needs_dynlinker && !dlp) {
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++			ret = polaris_static_entry((vm_offset_t)addr, header, result);
++#else
+ 			ret = LOAD_FAILURE;
++#endif
+ 		}
+ 
+ 		if ((ret == LOAD_SUCCESS) && (dlp != 0)) {

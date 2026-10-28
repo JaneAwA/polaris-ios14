@@ -35,3 +35,4 @@
 0035-polaris-aes-null-guards.patch
 0036-polaris-mockfs-md0-root.patch
 0037-polaris-user-mode-first-exec.patch
+0038-polaris-static-lcmain-exec.patch
