@@ -1,0 +1,12 @@
+diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
+--- a/iokit/KernelConfigTables.cpp
++++ b/iokit/KernelConfigTables.cpp
+@@ -39,7 +39,7 @@
+     "     'IOClass'         = PolarisPlatformExpert;"
+     "     'IOProviderClass' = IOPlatformExpertDevice;"
+     "     'IOProbeScore'    = 10000:32;"
+-    "   }"
++    "   },"
+ #endif /* ARM64_BOARD_CONFIG_POLARIS */
+     "   {"
+     "     'IOClass'         = IOPanicPlatform;"
