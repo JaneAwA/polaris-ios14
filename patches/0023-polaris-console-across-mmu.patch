@@ -1,0 +1,234 @@
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -1744,6 +1744,53 @@
+ extern void polaris_boot_mark(unsigned int slot, unsigned int colour);
+ extern void polaris_console_suspend(void);
+ 
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++/* pexpert/arm/pe_serial.c: move the console onto a kernel mapping. */
++extern void polaris_console_rebind(void *va);
++
++static vm_map_address_t polaris_console_va;
++
++/*
++ * POLARIS: give the panel a home in the kernel's own tables.
++ *
++ * The early console writes the raw framebuffer address, which only the
++ * bootstrap identity tables translate.  arm_vm_init() drops those when it
++ * installs TTBR0 = invalid_ttep, and nothing maps the panel again until the
++ * first ml_io_map() after pmap_init().  Everything in between -- the switch to
++ * the real TTBR1, pmap_bootstrap(), pmap_init() -- is invisible, which is why
++ * a failure there looks like a plain hang.
++ *
++ * Carve one 32 MB block out of the physmap's L1 slot, above physmap_end so the
++ * aperture never maps it, and describe the panel there with a single device
++ * block descriptor -- the same one start.s uses for the identity mapping.  The
++ * L2 table for that slot already exists: init_ptpages() built it for the
++ * aperture a few lines above.
++ */
++static void
++polaris_console_map_kernel(boot_args *args)
++{
++	vm_map_address_t fb_pa = args->Video.v_baseAddr;
++	vm_map_address_t va = (VM_MIN_KERNEL_ADDRESS - ARM_TT_L2_SIZE) +
++	    (fb_pa & ARM_TT_L2_OFFMASK);
++	tt_entry_t *l1_tte, *l2_tte;
++
++	polaris_console_va = 0;
++	l1_tte = cpu_tte + ((va & ARM_TT_L1_INDEX_MASK) >> ARM_TT_L1_SHIFT);
++	if ((*l1_tte & ARM_TTE_VALID) == 0) {
++		return;         /* no L2 table over the aperture: stay on the raw address */
++	}
++	l2_tte = (tt_entry_t *)phystokv(*l1_tte & ARM_TTE_TABLE_MASK);
++	l2_tte += (va & ARM_TT_L2_INDEX_MASK) >> ARM_TT_L2_SHIFT;
++	if (*l2_tte != ARM_TTE_EMPTY) {
++		return;         /* something already lives here */
++	}
++	*l2_tte = (fb_pa & ~(vm_map_address_t)ARM_TT_L2_OFFMASK) | 0x40d; /* valid | AF | attrindx 3 (device) */
++	__asm__ volatile("dsb sy" ::: "memory");
++	polaris_console_va = va;
++	polaris_console_rebind((void *)(uintptr_t)va);
++}
++#endif /* ARM64_BOARD_CONFIG_POLARIS */
++
+ void
+ arm_vm_init(uint64_t memory_size, boot_args * args)
+ {
+@@ -2089,21 +2136,31 @@
+ 	set_tbi();
+ 
+ 	arm_vm_physmap_init(args);
++
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	/* Do this while the bootstrap tables can still reach the framebuffer. */
++	polaris_console_map_kernel(args);
++#endif
+ 	set_mmu_ttb_alternate(cpu_ttep & TTBR_BADDR_MASK);
+ 
+ 	ml_enable_monitor();
+ 
+ 	/*
+ 	 * Last point where the identity table still maps the panel: the next
+-	 * store to TTBR0 drops it, and nothing maps the framebuffer again until
+-	 * serial_init() runs after pmap_bootstrap().
++	 * store to TTBR0 drops it.  polaris_console_map_kernel() has already
++	 * pointed the console at a kernel mapping by now, so keep drawing.
+ 	 */
+ 	polaris_boot_mark(14, 0xffff8000u);
++	/* No-op when the block mapping above worked; otherwise stop drawing. */
+ 	polaris_console_suspend();
+ 
+ 	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
+ 
+ 	flush_mmu_tlb();
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	/* Running on the kernel's own tables with no identity map behind us. */
++	polaris_note("S1", polaris_console_va, 0, 0);
++#endif
+ #if defined(HAS_VMSA_LOCK)
+ 	vmsa_lock();
+ #endif
+@@ -2138,6 +2195,9 @@
+ 		// The preliminary auxKC mapping has been broken up.
+ 		flush_mmu_tlb();
+ 	}
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	polaris_note("S2", segLOWEST, avail_start, dynamic_memory_begin);
++#endif
+ 
+ 	sane_size = mem_size - (avail_start - gPhysBase);
+ 	max_mem = mem_size;
+@@ -2180,6 +2240,9 @@
+ 	}
+ #endif
+ 	pmap_bootstrap(dynamic_memory_begin);
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	polaris_note("S3", dynamic_memory_begin, 0, 0);
++#endif
+ 
+ 	disable_preemption();
+ 
+@@ -2301,4 +2364,7 @@
+ 	first_avail = avail_start;
+ 	patch_low_glo_static_region(args->topOfKernelData, avail_start - args->topOfKernelData);
+ 	enable_preemption();
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	polaris_note("S4", avail_start, first_avail, 0);
++#endif
+ }
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -842,6 +842,12 @@
+ static int fbcon_registered;
+ /* fbcon_base holds the raw MMIO address, not a kernel mapping (pre-pmap). */
+ static int fbcon_physical;
++/*
++ * arm_vm_init() replaced the raw address with a block mapping of its own
++ * before dropping the identity tables, so the console works across the MMU
++ * switch and the later ml_io_map() is an upgrade rather than a rescue.
++ */
++static int fbcon_kernel_mapped;
+ 
+ static void
+ fbcon_clear_row(uint32_t row)
+@@ -966,25 +972,29 @@
+  * POLARIS: paint one bring-up progress cell from C.
+  *
+  * start.s lays out the same 96x96 grid: slots 0-7 fill the first row, 8 and up
+- * the second.  Writes go to the physical address, not through fbcon_base,
+- * because they have to work from the first C instruction -- long before
+- * pmap_init() makes ml_io_map() possible.  That only holds until arm_vm_init()
+- * installs the kernel pmap and drops the identity mapping, so callers must be
+- * above that point.
++ * the second.  The panel is addressed through fbcon_base when the console has
++ * one, so the same call works before pmap_init() (raw address), across the MMU
++ * switch (block mapping installed by arm_vm_init) and afterwards (ml_io_map).
+  */
+ void
+ polaris_boot_mark(unsigned int slot, unsigned int colour)
+ {
+ 	uint32_t x = (slot % 8u) * 100u;
+ 	uint32_t y = (slot / 8u) * 120u;
+-	volatile uint32_t *line =
+-	    (volatile uint32_t *)(FBCON_BASE + y * FBCON_STRIDE + x * 4);
++	volatile uint32_t *base = fbcon_base;
++	uint32_t words = fbcon_words;
++
++	if (base == NULL) {
++		base = (volatile uint32_t *)(uintptr_t)FBCON_BASE;
++		words = FBCON_STRIDE / 4;
++	}
++	volatile uint32_t *line = base + y * words + x;
+ 
+ 	for (uint32_t r = 0; r < 96; r++) {
+ 		for (uint32_t c = 0; c < 96; c++) {
+ 			line[c] = colour;
+ 		}
+-		line += FBCON_STRIDE / 4;
++		line += words;
+ 	}
+ 	__asm__ volatile ("dsb sy" ::: "memory");
+ }
+@@ -1250,19 +1260,36 @@
+ /*
+  * POLARIS: stop writing to the panel before TTBR0 leaves the identity table.
+  *
+- * The early console reaches the framebuffer through the raw address, which
+- * only start.s's table maps.  arm_vm_init() calls this just before it installs
+- * the kernel pmap; serial_init() re-registers fbcon_base through ml_io_map()
+- * later, and the cursor position survives, so nothing already printed is lost.
++ * Only needed when the console is still on the raw address.  When
++ * arm_vm_init() managed to install a kernel block mapping for the panel it
++ * calls polaris_console_rebind() first, and this becomes a no-op so the
++ * kernel keeps talking through the switch.
+  */
+ void
+ polaris_console_suspend(void)
+ {
+-	if (fbcon_physical) {
++	if (fbcon_physical && !fbcon_kernel_mapped) {
+ 		fbcon_base = NULL;
+ 	}
+ }
+ 
++/*
++ * POLARIS: continue on the block mapping arm_vm_init() installed.
++ *
++ * fbcon_physical stays set: the address is still the panel, not a page that
++ * ml_io_map() owns, so the later fbcon_init() call has to re-map it through
++ * the pmap and take over.  The cursor position survives that hand-off.
++ */
++void
++polaris_console_rebind(void *va)
++{
++	if (va == NULL) {
++		return;
++	}
++	fbcon_base = (volatile uint32_t *)va;
++	fbcon_kernel_mapped = 1;
++}
++
+ #else /* !ARM64_BOARD_CONFIG_POLARIS */
+ 
+ static void
+diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -166,6 +166,7 @@
+  */
+ extern void polaris_boot_mark(unsigned int slot, unsigned int colour);
+ extern void polaris_console_early_init(void);
++extern void polaris_note(const char *tag, uint64_t a, uint64_t b, uint64_t c);
+ 
+ /*
+  * Forward definition
+@@ -511,6 +512,7 @@
+ 	polaris_boot_mark(11, 0xff000080u);
+ 
+ 	arm_vm_init(xmaxmem, args);
++	polaris_note("S5", 0, 0, 0);
+ 
+ 	if (debug_boot_arg) {
+ 		patch_low_glo();
