@@ -1,0 +1,59 @@
+diff --git a/bsd/kern/mach_loader.c b/bsd/kern/mach_loader.c
+--- a/bsd/kern/mach_loader.c
++++ b/bsd/kern/mach_loader.c
+@@ -781,7 +781,13 @@
+ 		if ((lc->cmd == LC_SEGMENT_64) && !have_text) {
+ 			struct segment_command_64 *sc = (struct segment_command_64 *)lc;
+ 
+-			if ((sc->cmdsize >= sizeof(*sc)) && (sc->fileoff == 0)) {
++			/*
++			 * __PAGEZERO is the first segment and it also has fileoff 0,
++			 * but it holds no bytes of the file.  The segment the entry
++			 * offset is relative to is the one that does.
++			 */
++			if ((sc->cmdsize >= sizeof(*sc)) && (sc->fileoff == 0) &&
++			    (sc->filesize != 0)) {
+ 				text_vmaddr = sc->vmaddr;
+ 				have_text = TRUE;
+ 			}
+@@ -905,8 +911,21 @@
+ 		} else {
+ 			/* Check properties of static executables (disallowed except for development) */
+ #if !(DEVELOPMENT || DEBUG)
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++			/*
++			 * POLARIS: a RELEASE kernel answers LOAD_FAILURE here, which
++			 * is how the first user-space exec died: "unexpected SIGKILL
++			 * of init ... namespace 9 code 0x1" is psignal() panicking
++			 * because load_machfile() said the Mach-O was bad.  There is
++			 * no dyld on this board yet, so the binary that has to run
++			 * first is a static one; refusing it refuses the milestone.
++			 * An image without MH_DYLDLINK is still checked for a hard
++			 * page zero, for its entry point and for code signing.
++			 */
++#else
+ 			return LOAD_FAILURE;
+-#endif
++#endif /* ARM64_BOARD_CONFIG_POLARIS */
++#endif /* !(DEVELOPMENT || DEBUG) */
+ 		}
+ 		break;
+ 	case MH_DYLINKER:
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -1178,6 +1178,14 @@
+ 	 * Actually load the image file we previously decided to load.
+ 	 */
+ 	lret = load_machfile(imgp, mach_header, thread, &map, &load_result);
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	/*
++	 * 0 is LOAD_SUCCESS; anything else panics the machine below, because
++	 * psignal(SIGKILL) on initproc is fatal by design.  Print the code so a
++	 * photo of the screen is enough to tell what the loader objected to.
++	 */
++	polaris_note("L0", (uint64_t)lret, (uint64_t)load_result.entry_point, 0);
++#endif
+ 	if (lret != LOAD_SUCCESS) {
+ 		error = load_return_to_errno(lret);
+ 

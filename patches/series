@@ -38,3 +38,4 @@
 0038-polaris-static-lcmain-exec.patch
 0039-polaris-software-sha2.patch
 0040-polaris-mockfs-eof.patch
+0041-polaris-allow-static-exec.patch
