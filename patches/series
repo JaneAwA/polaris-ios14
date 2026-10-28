@@ -23,3 +23,4 @@
 0023-polaris-console-across-mmu.patch
 0024-polaris-pmap-stages.patch
 0025-polaris-console-vp-window.patch
+0026-polaris-heap-l1-tables.patch

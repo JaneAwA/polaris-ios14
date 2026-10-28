@@ -1,0 +1,29 @@
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -2331,6 +2331,25 @@
+ #endif // defined(ARM_LARGE_MEMORY)
+ #endif // defined(KERNEL_INTEGRITY_KTRR) || defined(KERNEL_INTEGRITY_CTRR)
+ 
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	/*
++	 * This target has no KTRR and no CTRR, so the block above is compiled
++	 * out and nothing here ever creates an L1 table for the heap range.
++	 * That was survivable while boot stayed inside the slot that
++	 * init_ptpages() built for dynamic_memory_begin, but the loop below
++	 * starts at CPUWINDOWS_BASE - PE_EARLY_BOOT_VA, which lands in the
++	 * last 32 MB block of slot 0x7e8 (VM_MAX_KERNEL_ADDRESS, 512 GB of
++	 * heap above the link address).  With that entry empty, phystokv(0)
++	 * turns the store into 0xfffffdff06003ff8 -- the physmap slot at L2
++	 * index 3, which init_ptpages() never mapped -- and the boot dies on a
++	 * level 2 translation fault ten lines before S4.
++	 *
++	 * Build the same tables the KTRR path would have.
++	 */
++	init_ptpages(cpu_tte, KERNEL_PMAP_HEAP_RANGE_START & ~ARM_TT_L1_OFFMASK, VM_MAX_KERNEL_ADDRESS, FALSE, ARM_DYNAMIC_TABLE_XN);
++	polaris_note("H1", cpu_tte[(VM_MAX_KERNEL_ADDRESS & ARM_TT_L1_INDEX_MASK) >> ARM_TT_L1_SHIFT], avail_start, 0);
++#endif /* ARM64_BOARD_CONFIG_POLARIS */
++
+ 	/*
+ 	 * Initialize l3 page table pages :
+ 	 *   cover this address range:
