@@ -1,0 +1,116 @@
+diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
+--- a/iokit/KernelConfigTables.cpp
++++ b/iokit/KernelConfigTables.cpp
+@@ -34,6 +34,13 @@
+ 
+ const char * gIOKernelConfigTables =
+     "("
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++    "   {"
++    "     'IOClass'         = PolarisPlatformExpert;"
++    "     'IOProviderClass' = IOPlatformExpertDevice;"
++    "     'IOProbeScore'    = 10000:32;"
++    "   }"
++#endif /* ARM64_BOARD_CONFIG_POLARIS */
+     "   {"
+     "     'IOClass'         = IOPanicPlatform;"
+     "     'IOProviderClass' = IOPlatformExpertDevice;"
+diff --git a/iokit/Kernel/IOPlatformExpert.cpp b/iokit/Kernel/IOPlatformExpert.cpp
+--- a/iokit/Kernel/IOPlatformExpert.cpp
++++ b/iokit/Kernel/IOPlatformExpert.cpp
+@@ -2294,3 +2294,95 @@
+ 
+ 	return false;
+ }
++
++/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++
++/*********************************************************************
++* PolarisPlatformExpert
++*
++* The platform expert normally comes from a SoC specific kext
++* (AppleARMPlatform and friends) that is linked into the iOS
++* kernelcache.  This kernel carries no kexts at all and
++* IODTPlatformExpert is abstract, so the only personality that can
++* match the root IOPlatformExpertDevice is IOPanicPlatform, whose
++* start() panics with:
++*
++*   Unable to find driver for this platform: "D22AP".
++*
++* Stand in for that kext with the smallest concrete subclass that can
++* take over.  It deliberately does not let IODTPlatformExpert publish
++* the device tree -- processTopLevel() asserts on /options and would
++* build nubs for hardware that nothing here can drive yet.
++*********************************************************************/
++#undef super
++#define super IODTPlatformExpert
++
++class PolarisPlatformExpert : public IODTPlatformExpert {
++	OSDeclareDefaultStructors(PolarisPlatformExpert);
++
++public:
++	IOService * probe(IOService * provider, SInt32 * score) APPLE_KEXT_OVERRIDE;
++	bool start(IOService * provider) APPLE_KEXT_OVERRIDE;
++	bool configure(IOService * provider) APPLE_KEXT_OVERRIDE;
++
++	const char * deleteList(void) APPLE_KEXT_OVERRIDE;
++	const char * excludeList(void) APPLE_KEXT_OVERRIDE;
++};
++
++OSDefineMetaClassAndStructors(PolarisPlatformExpert, IODTPlatformExpert);
++
++extern "C" void polaris_note(const char *tag, uint64_t a, uint64_t b, uint64_t c);
++
++IOService *
++PolarisPlatformExpert::probe(IOService * provider, SInt32 * score)
++{
++	polaris_note("P1", (uint64_t)(uintptr_t)provider, 0, 0);
++
++	/*
++	 * IODTPlatformExpert::probe() insists on an IONameMatch property
++	 * and would reject the root nub, so accept it unconditionally.
++	 * The score only has to beat IOPanicPlatform's zero.
++	 */
++	if (score) {
++		*score = 10000;
++	}
++
++	return this;
++}
++
++bool
++PolarisPlatformExpert::start(IOService * provider)
++{
++	polaris_note("P2", 0, 0, 0);
++
++	if (!super::start(provider)) {
++		polaris_note("P3", 0, 0, 0);
++		return false;
++	}
++
++	polaris_note("P3", 1, 0, 0);
++	return true;
++}
++
++bool
++PolarisPlatformExpert::configure(IOService * provider)
++{
++	polaris_note("P4", 0, 0, 0);
++
++	return true;
++}
++
++const char *
++PolarisPlatformExpert::deleteList(void)
++{
++	return "";
++}
++
++const char *
++PolarisPlatformExpert::excludeList(void)
++{
++	return "";
++}
++
++#endif /* ARM64_BOARD_CONFIG_POLARIS */
