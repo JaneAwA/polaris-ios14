@@ -1,0 +1,45 @@
+diff --git a/osfmk/arm/pmap.c b/osfmk/arm/pmap.c
+--- a/osfmk/arm/pmap.c
++++ b/osfmk/arm/pmap.c
+@@ -4663,6 +4663,11 @@
+  *	avail_end	PA of last managed physical page
+  */
+ 
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++/* pexpert/arm/pe_serial.c: one line of numbers on the panel. */
++extern void polaris_note(const char *tag, uint64_t a, uint64_t b, uint64_t c);
++#endif
++
+ void
+ pmap_bootstrap(
+ 	vm_offset_t vstart)
+@@ -4677,6 +4682,9 @@
+ 	vm_map_offset_t maxoffset;
+ 
+ 	lck_grp_init(&pmap_lck_grp, "pmap", LCK_GRP_ATTR_NULL);
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	polaris_note("B1", vstart, avail_start, avail_end);
++#endif
+ 
+ #if XNU_MONITOR
+ 
+@@ -4782,6 +4790,9 @@
+ 
+ 	pmap_load_io_rgns();
+ 	ptd_bootstrap(ptd_root_table, (unsigned int)(ptd_root_table_size / sizeof(pt_desc_t)));
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	polaris_note("B2", avail_start, (uint64_t)io_attr_table_size, (uint64_t)ptd_root_table_size);
++#endif
+ 
+ #if XNU_MONITOR
+ 	pmap_array_begin = (void *)phystokv(avail_start);
+@@ -4869,6 +4880,9 @@
+ 	/* Shadow the CPU copy windows, as they fall outside of the physical aperture */
+ 	kasan_map_shadow(CPUWINDOWS_BASE, CPUWINDOWS_TOP - CPUWINDOWS_BASE, true);
+ #endif /* KASAN */
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	polaris_note("B3", avail_start, virtual_space_start, 0);
++#endif
+ }
+ 
+ #if XNU_MONITOR
