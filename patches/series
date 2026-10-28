@@ -36,3 +36,4 @@
 0036-polaris-mockfs-md0-root.patch
 0037-polaris-user-mode-first-exec.patch
 0038-polaris-static-lcmain-exec.patch
+0039-polaris-software-sha2.patch
