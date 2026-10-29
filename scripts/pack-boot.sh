@@ -42,7 +42,15 @@ echo "== ADT (iPhone10,3 identity + SDM845 topology) =="
 "$PY" "$TOOLS/mkadt.py" "$WORK/polaris.adt" --polaris --ram 6
 
 echo "== payload =="
+# rd=md0 is mandatory: patch 0036 publishes the built-in root image as memory
+# device md0, and only "rd=md0" makes mdevlookup() pick it.  Without it the
+# kernel blocks forever in IOFindBSDRoot waiting for an IOMedia whose
+# Content=Apple_IFS will never appear (observed on hardware: the log stops at
+# "Waiting on <dict ... Apple_IFS ...>").
+# cs_enforcement_disable=1: the launchd image is not code-signed.
+POLARIS_CMDLINE='-v debug=0xc serial=3 cpus=1 keepsyms=1 rd=md0 cs_enforcement_disable=1 unentitled_ios_sim_launch=1 sweet_ios_userland=1'
 "$PY" "$TOOLS/mkpayload.py" "$KERNEL" "$WORK/polaris.adt" "$WORK/payload.bin" \
+	--cmdline "$POLARIS_CMDLINE" \
 	--check-polaris-cpus
 SIZE=$(wc -c < "$WORK/payload.bin" | tr -d ' ')
 echo "payload: ${SIZE} bytes (limit ${LIMIT})"
