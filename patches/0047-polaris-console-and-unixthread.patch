@@ -1,0 +1,139 @@
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -459,7 +459,7 @@
+ 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x00,
+ 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+ 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x5e, 0x5f, 0x00, 0x00,
+-	0x00, 0x00, 0x2f, 0x76, 0x61, 0x72, 0x0c, 0x00, 0x04, 0x00, 0xed, 0x01,
++	0x00, 0x00, 0x2f, 0x76, 0x61, 0x72, 0x0c, 0x00, 0x04, 0x00, 0x92, 0x01,
+ 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0x00,
+ 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+ 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x5e, 0x5f, 0x00, 0x00,
+diff --git a/bsd/kern/mach_loader.c b/bsd/kern/mach_loader.c
+--- a/bsd/kern/mach_loader.c
++++ b/bsd/kern/mach_loader.c
+@@ -754,6 +754,59 @@
+  * because there is no dyld here yet, so do what dyld would do: add the offset
+  * to __TEXT.
+  */
++/*
++ * POLARIS: take the entry point out of an LC_UNIXTHREAD and leave the stack
++ * to the kernel.
++ *
++ * A statically linked arm64 binary has no dyld and no LC_MAIN, so the linker
++ * puts the entry point in the thread state of LC_UNIXTHREAD -- and, for a
++ * static image, the stack pointer in that state is zero, because the stack
++ * is the kernel's business.  The stock path (load_unixthread) would push the
++ * whole state onto the thread and leave the process with a stack pointer of
++ * zero, so only the program counter is taken from here.
++ */
++#define POLARIS_THREAD_STATE64       6
++#define POLARIS_THREAD_STATE64_COUNT 68
++
++static load_return_t
++polaris_unixthread_entry(struct thread_command * tcp, load_result_t * result)
++{
++	mach_vm_offset_t addr;
++	uint64_t * ts;
++	uint32_t flavor;
++	uint32_t count;
++
++	if (tcp->cmdsize < sizeof(struct thread_command)) {
++		return LOAD_BADMACHO;
++	}
++	if (tcp->cmdsize < sizeof(struct thread_command) +
++	    2 * sizeof(uint32_t) + 34 * sizeof(uint64_t)) {
++		return LOAD_BADMACHO;
++	}
++
++	ts = (uint64_t *)(((vm_offset_t)tcp) + sizeof(struct thread_command));
++	flavor = ((uint32_t *)ts)[0];
++	count = ((uint32_t *)ts)[1];
++	if (flavor != POLARIS_THREAD_STATE64 || count != POLARIS_THREAD_STATE64_COUNT) {
++		return LOAD_BADMACHO;
++	}
++
++	/* x[29], fp, lr, sp, pc -- the program counter is the 33rd word. */
++	result->entry_point = (user_addr_t)ts[32];
++
++	/* The stack is the one the kernel maps for this process. */
++	if (thread_userstackdefault(&addr, result->is_64bit_addr) != KERN_SUCCESS) {
++		return LOAD_FAILURE;
++	}
++	result->user_stack_alloc_size = MAXSSIZ;
++	result->user_stack = (user_addr_t)mach_vm_trunc_page(addr);
++
++	result->unixproc = TRUE;
++	result->thread_count++;
++
++	return LOAD_SUCCESS;
++}
++
+ static load_return_t
+ polaris_static_entry(vm_offset_t image, struct mach_header *header, load_result_t *result, int64_t slide)
+ {
+@@ -1300,12 +1353,25 @@
+ 				if (pass != 1) {
+ 					break;
+ 				}
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++				/*
++				 * POLARIS: there is no dyld here, and a static arm64
++				 * binary keeps its entry point in the thread state of
++				 * LC_UNIXTHREAD.  Only take the program counter from it:
++				 * the stack pointer in there is zero, and the stack is
++				 * the one the kernel maps.
++				 */
++				ret = polaris_unixthread_entry(
++				    (struct thread_command *) lcp,
++				    result);
++#else
+ 				ret = load_unixthread(
+-					(struct thread_command *) lcp,
+-					thread,
+-					slide,
+-					is_x86_64_compat_binary,
+-					result);
++				    (struct thread_command *) lcp,
++				    thread,
++				    slide,
++				    is_x86_64_compat_binary,
++				    result);
++#endif /* ARM64_BOARD_CONFIG_POLARIS */
+ 				break;
+ 			}
+ 			case LC_MAIN:
+diff --git a/bsd/miscfs/mockfs/mockfs_fsnode.c b/bsd/miscfs/mockfs/mockfs_fsnode.c
+--- a/bsd/miscfs/mockfs/mockfs_fsnode.c
++++ b/bsd/miscfs/mockfs/mockfs_fsnode.c
+@@ -65,7 +65,8 @@
+ 		return EINVAL;
+ 	}
+ 
+-	if (type != MOCKFS_DIR && type != MOCKFS_REG && type != MOCKFS_LNK) {
++	if (type != MOCKFS_DIR && type != MOCKFS_REG && type != MOCKFS_LNK &&
++	    type != MOCKFS_CONSOLE) {
+ 		return EINVAL;
+ 	}
+ 
+@@ -85,7 +86,18 @@
+ 
+ 	fsnp->type = type;
+ 	fsnp->mnt = mp;
+-	fsnp->mode = (type == MOCKFS_DIR) ? 0755 : 0644;
++	switch (type) {
++	case MOCKFS_DIR:
++		fsnp->mode = 0755;
++		break;
++	case MOCKFS_CONSOLE:
++		/* everybody may write to the console */
++		fsnp->mode = 0622;
++		break;
++	default:
++		fsnp->mode = 0644;
++		break;
++	}
+ 
+ 	*fsnpp = fsnp;
+ 

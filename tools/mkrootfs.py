@@ -102,7 +102,9 @@ def build(src, image_size=None):
     off = 32
     for name, typ, data, fileid, foff in placed:
         size = len(data) if typ == REG else 0
-        struct.pack_into('<HHIIIIQQQ', buf, off, len(name), typ, 0o755,
+        # The console is written by user space, everybody may write to it.
+        mode = 0o622 if typ == CONSOLE else 0o755
+        struct.pack_into('<HHIIIIQQQ', buf, off, len(name), typ, mode,
             0, 0, fileid, size, foff, MTIME)
         off += 44
         buf[off:off + len(name)] = name
