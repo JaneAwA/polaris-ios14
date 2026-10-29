@@ -39,3 +39,4 @@
 0039-polaris-software-sha2.patch
 0040-polaris-mockfs-eof.patch
 0041-polaris-allow-static-exec.patch
+0042-polaris-readonly-rootfs.patch
