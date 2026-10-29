@@ -1104,7 +1104,7 @@ diff --git a/bsd/miscfs/mockfs/mockfs_vnops.c b/bsd/miscfs/mockfs/mockfs_vnops.c
  #include <sys/ubc.h>
  #include <sys/mount_internal.h>
  #include <sys/vnode_internal.h>
-@@ -42,280 +47,350 @@
+@@ -42,280 +47,359 @@
  #define VOPFUNC int (*)(void *)
  
  /*
@@ -1328,11 +1328,20 @@ diff --git a/bsd/miscfs/mockfs/mockfs_vnops.c b/bsd/miscfs/mockfs/mockfs_vnops.c
  	VATTR_RETURN(vap, va_total_alloc, fsnode->size);
  	VATTR_RETURN(vap, va_data_size, fsnode->size);
  	VATTR_RETURN(vap, va_data_alloc, fsnode->size);
-+	VATTR_RETURN(vap, va_access_time, fsnode->mtime);
-+	VATTR_RETURN(vap, va_modify_time, fsnode->mtime);
-+	VATTR_RETURN(vap, va_change_time, fsnode->mtime);
-+	VATTR_RETURN(vap, va_create_time, fsnode->mtime);
  
++	vap->va_access_time.tv_sec = (time_t)fsnode->mtime;
++	vap->va_access_time.tv_nsec = 0;
++	VATTR_SET_SUPPORTED(vap, va_access_time);
++	vap->va_modify_time.tv_sec = (time_t)fsnode->mtime;
++	vap->va_modify_time.tv_nsec = 0;
++	VATTR_SET_SUPPORTED(vap, va_modify_time);
++	vap->va_change_time.tv_sec = (time_t)fsnode->mtime;
++	vap->va_change_time.tv_nsec = 0;
++	VATTR_SET_SUPPORTED(vap, va_change_time);
++	vap->va_create_time.tv_sec = (time_t)fsnode->mtime;
++	vap->va_create_time.tv_nsec = 0;
++	VATTR_SET_SUPPORTED(vap, va_create_time);
++
  	return 0;
  }
  
@@ -1382,23 +1391,17 @@ diff --git a/bsd/miscfs/mockfs/mockfs_vnops.c b/bsd/miscfs/mockfs/mockfs_vnops.c
 -		rvalue = ENOTSUP;
 +	if (vp->v_type != VREG) {
 +		return EINVAL;
- 	}
- 
--	return rvalue;
++	}
++
 +	return cluster_read(vp, ap->a_uio, fsnode->size, ap->a_ioflag);
- }
- 
- /*
-- * struct vnop_reclaim_args {
-- *   struct vnodeop_desc *a_desc; // We don't care about this (for now)
-- *   vnode_t a_vp;                // Pointer to the vnode we are reclaiming
-- *   vfs_context_t a_context;     // We don't care about this (for now)
-- * };
++}
++
++/*
 + * mockfs_readdir:
 + *   Synthesises ".", ".." and then the node's children in image order.
 + *   Offsets are byte offsets into the directory stream, exactly like a real
 + *   filesystem, because user space may restart a scan in the middle.
-  *
++ *
 + * Returns 0 on success, or an error.
 + */
 +int
@@ -1427,8 +1430,9 @@ diff --git a/bsd/miscfs/mockfs/mockfs_vnops.c b/bsd/miscfs/mockfs/mockfs_vnops.c
 +
 +	if (ap->a_flags & (VNODE_READDIR_EXTENDED | VNODE_READDIR_REQSEEKOFF)) {
 +		return EINVAL;
-+	}
-+
+ 	}
+ 
+-	return rvalue;
 +	startpos = uio->uio_offset;
 +	pos = 0;
 +	child = fsnode->child;
@@ -1501,13 +1505,18 @@ diff --git a/bsd/miscfs/mockfs/mockfs_vnops.c b/bsd/miscfs/mockfs/mockfs_vnops.c
 +	}
 +
 +	return error;
-+}
-+
-+/*
+ }
+ 
+ /*
+- * struct vnop_reclaim_args {
+- *   struct vnodeop_desc *a_desc; // We don't care about this (for now)
+- *   vnode_t a_vp;                // Pointer to the vnode we are reclaiming
+- *   vfs_context_t a_context;     // We don't care about this (for now)
+- * };
 + * mockfs_readlink:
 + *   The target is stored in the image right after the name table, so it can
 + *   be copied without touching the backing device.
-+ *
+  *
 + * Returns 0 on success, or an error.
 + */
 +int
@@ -1621,7 +1630,7 @@ diff --git a/bsd/miscfs/mockfs/mockfs_vnops.c b/bsd/miscfs/mockfs/mockfs_vnops.c
   *
   * Returns 0 on success, or an error.
   */
-@@ -323,104 +398,67 @@
+@@ -323,104 +407,67 @@
  mockfs_pagein(struct vnop_pagein_args * ap)
  {
  	mockfs_fsnode_t fsnode;
@@ -1756,7 +1765,7 @@ diff --git a/bsd/miscfs/mockfs/mockfs_vnops.c b/bsd/miscfs/mockfs/mockfs_vnops.c
  }
  
  int(**mockfs_vnodeop_p)(void *);
-@@ -428,10 +466,10 @@
+@@ -428,10 +475,10 @@
  	{ .opve_op = &vnop_default_desc, .opve_impl = (VOPFUNC) vn_default_error }, /* default */
  	{ .opve_op = &vnop_lookup_desc, .opve_impl = (VOPFUNC) mockfs_lookup }, /* lookup */
  	{ .opve_op = &vnop_create_desc, .opve_impl = (VOPFUNC) err_create },/* create */
@@ -1770,7 +1779,7 @@ diff --git a/bsd/miscfs/mockfs/mockfs_vnops.c b/bsd/miscfs/mockfs/mockfs_vnops.c
  	{ .opve_op = &vnop_getattr_desc, .opve_impl = (VOPFUNC) mockfs_getattr }, /* getattr */
  	{ .opve_op = &vnop_setattr_desc, .opve_impl = (VOPFUNC) err_setattr }, /* setattr */
  	{ .opve_op = &vnop_read_desc, .opve_impl = (VOPFUNC) mockfs_read }, /* read */
-@@ -446,9 +484,9 @@
+@@ -446,9 +493,9 @@
  	{ .opve_op = &vnop_mkdir_desc, .opve_impl = (VOPFUNC) err_mkdir }, /* mkdir */
  	{ .opve_op = &vnop_rmdir_desc, .opve_impl = (VOPFUNC) err_rmdir }, /* rmdir */
  	{ .opve_op = &vnop_symlink_desc, .opve_impl = (VOPFUNC) err_symlink }, /* symlink */
