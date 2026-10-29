@@ -28,15 +28,16 @@ diff --git a/bsd/kern/mach_loader.c b/bsd/kern/mach_loader.c
  			return LOAD_FAILURE;
  		}
  		proc_transcommit(p, 0);
-@@ -793,9 +806,13 @@
- 
- 	/* x[29], fp, lr, sp, pc -- the program counter is the 33rd word. */
- 	result->entry_point = (user_addr_t)ts[32];
+@@ -793,10 +806,14 @@
+
+	/* x[29], fp, lr, sp, pc -- the program counter is the 33rd word. */
+	result->entry_point = (user_addr_t)ts[33];
+	result->validentry = 1;
 +	#if defined(ARM64_BOARD_CONFIG_POLARIS)
-+	polaris_note("U1", (uint64_t)ts[32], (uint64_t)result->validentry, 0);
++	polaris_note("U1", (uint64_t)ts[33], (uint64_t)result->validentry, 0);
 +	#endif
- 
- 	/* The stack is the one the kernel maps for this process. */
+
+	/* The stack is the one the kernel maps for this process. */
  	if (thread_userstackdefault(&addr, result->is_64bit_addr) != KERN_SUCCESS) {
 +		POLARIS_MF(2);
  		return LOAD_FAILURE;

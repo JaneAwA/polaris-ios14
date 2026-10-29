@@ -13,7 +13,7 @@ diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
 diff --git a/bsd/kern/mach_loader.c b/bsd/kern/mach_loader.c
 --- a/bsd/kern/mach_loader.c
 +++ b/bsd/kern/mach_loader.c
-@@ -754,6 +754,59 @@
+@@ -754,6 +754,60 @@
   * because there is no dyld here yet, so do what dyld would do: add the offset
   * to __TEXT.
   */
@@ -55,7 +55,8 @@ diff --git a/bsd/kern/mach_loader.c b/bsd/kern/mach_loader.c
 +	}
 +
 +	/* x[29], fp, lr, sp, pc -- the program counter is the 33rd word. */
-+	result->entry_point = (user_addr_t)ts[32];
++	result->entry_point = (user_addr_t)ts[33];
++	result->validentry = 1;
 +
 +	/* The stack is the one the kernel maps for this process. */
 +	if (thread_userstackdefault(&addr, result->is_64bit_addr) != KERN_SUCCESS) {
