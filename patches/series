@@ -40,3 +40,4 @@
 0040-polaris-mockfs-eof.patch
 0041-polaris-allow-static-exec.patch
 0042-polaris-readonly-rootfs.patch
+0043-polaris-page-sized-root-image.patch
