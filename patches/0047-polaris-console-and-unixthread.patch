@@ -1,7 +1,8 @@
 diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index 3a3ab68..3381b89 100644
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
-@@ -459,7 +459,7 @@
+@@ -459,7 +459,7 @@ const unsigned char polaris_root_image[20480]
  	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x00,
  	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
  	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x5e, 0x5f, 0x00, 0x00,
@@ -11,9 +12,10 @@ diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
  	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
  	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x5e, 0x5f, 0x00, 0x00,
 diff --git a/bsd/kern/mach_loader.c b/bsd/kern/mach_loader.c
+index 631b170..e4906cc 100644
 --- a/bsd/kern/mach_loader.c
 +++ b/bsd/kern/mach_loader.c
-@@ -754,6 +754,60 @@
+@@ -754,6 +754,60 @@ pie_required(
   * because there is no dyld here yet, so do what dyld would do: add the offset
   * to __TEXT.
   */
@@ -74,7 +76,7 @@ diff --git a/bsd/kern/mach_loader.c b/bsd/kern/mach_loader.c
  static load_return_t
  polaris_static_entry(vm_offset_t image, struct mach_header *header, load_result_t *result, int64_t slide)
  {
-@@ -1300,12 +1353,25 @@
+@@ -1300,12 +1354,25 @@ parse_machfile(
  				if (pass != 1) {
  					break;
  				}
@@ -106,9 +108,10 @@ diff --git a/bsd/kern/mach_loader.c b/bsd/kern/mach_loader.c
  			}
  			case LC_MAIN:
 diff --git a/bsd/miscfs/mockfs/mockfs_fsnode.c b/bsd/miscfs/mockfs/mockfs_fsnode.c
+index 779fcc2..6436bb8 100644
 --- a/bsd/miscfs/mockfs/mockfs_fsnode.c
 +++ b/bsd/miscfs/mockfs/mockfs_fsnode.c
-@@ -65,7 +65,8 @@
+@@ -65,7 +65,8 @@ mockfs_fsnode_create(mount_t mp, const char * name, size_t namelen,
  		return EINVAL;
  	}
  
@@ -118,7 +121,7 @@ diff --git a/bsd/miscfs/mockfs/mockfs_fsnode.c b/bsd/miscfs/mockfs/mockfs_fsnode
  		return EINVAL;
  	}
  
-@@ -85,7 +86,18 @@
+@@ -85,7 +86,18 @@ mockfs_fsnode_create(mount_t mp, const char * name, size_t namelen,
  
  	fsnp->type = type;
  	fsnp->mnt = mp;
