@@ -85,6 +85,27 @@ else
 	echo "patch set disabled (PATCH_SET=${PATCH_SET})"
 fi
 
+step "userland"
+# The root filesystem the kernel carries is built around the compiled
+# userland, so it cannot live in the patch series: compile it here and patch
+# the result in afterwards.  If any of this fails the kernel still builds --
+# the image from the patch series (the hand written stub) stays in place.
+if bash "${REPO}/scripts/build-userland.sh"; then
+	if python3 "${REPO}/tools/mkuserland.py" --xnu "$SRC" \
+		--binaries "${REPO}/out/userland" --patch "${REPO}/out/userland.patch"; then
+		if git -C "$SRC" apply -p1 "${REPO}/out/userland.patch"; then
+			echo "ok  userland"
+		else
+			echo "WARNING: the userland patch did not apply; keeping the stub image"
+			git -C "$SRC" checkout -- bsd/kern/bsd_init.c
+		fi
+	else
+		echo "WARNING: could not build the userland image; keeping the stub image"
+	fi
+else
+	echo "WARNING: the userland did not compile; keeping the stub image"
+fi
+
 step "closed kernel headers"
 # xnu-7195 includes <os/firehose_buffer_private.h>, which is not part of the
 # public macOS SDK: Apple's own builds get it from the internal SDK. The runner

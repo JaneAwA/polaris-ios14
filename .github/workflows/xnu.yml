@@ -27,6 +27,8 @@ on:
     paths:
       - "patches/**"
       - "scripts/**"
+      - "userland/**"
+      - "tools/**"
       - ".github/workflows/xnu.yml"
 
 concurrency:
