@@ -42,3 +42,4 @@
 0042-polaris-readonly-rootfs.patch
 0043-polaris-page-sized-root-image.patch
 0044-polaris-16k-page-launchd.patch
+0045-polaris-open-flags.patch
