@@ -112,6 +112,11 @@ def main():
         f.write(diff)
     sys.stderr.write('wrote %s (%d bytes)\n' % (args.patch, len(diff)))
 
+    # Put the tree back the way the patch series left it: the caller applies
+    # the patch, so the file must not carry the change twice.
+    subprocess.run(['git', '-C', args.xnu, 'checkout', '--',
+                    'bsd/kern/bsd_init.c'], check=True)
+
 
 if __name__ == '__main__':
     main()

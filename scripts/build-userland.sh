@@ -40,6 +40,7 @@ done
 COMMON=(-O2 -nostdlib -fno-stack-protector -fno-builtin -Wall)
 
 VARIANTS=(
+	"-target arm64-apple-macos11 -Wl,-static"
 	"-target arm64-apple-macos11"
 	"-target arm64-apple-macos11 -Wl,-platform_version,macos,11.0,11.0"
 	"-target arm64-apple-macos13"

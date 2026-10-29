@@ -10,6 +10,14 @@
 #ifndef POLARIS_H
 #define POLARIS_H
 
+/*
+ * ld64 builds the stub machinery of a normal executable and then wants
+ * dyld_stub_binder to fill it in.  There is no dyld on this board and
+ * nothing is ever stubbed, but the link fails without the symbol, so give
+ * it an empty one (weak, so two programs can be linked into one).
+ */
+__attribute__((weak)) void dyld_stub_binder(void) { }
+
 #define PSYS_exit      1
 #define PSYS_fork      2
 #define PSYS_read      3
