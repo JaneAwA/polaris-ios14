@@ -7,12 +7,16 @@
 # kernel's static exec path (patch 0041) can start.
 #
 #   output: out/userland/launchd.bin, out/userland/hello.bin
+#
+# The runner has the macOS SDK only, so the first attempt targets iOS and
+# falls back to macOS: the kernel does not look at the platform in
+# LC_BUILD_VERSION, only at the CPU type and the load commands.
 set -uo pipefail
 
 REPO="${REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
 OUT="${OUT:-${REPO}/out/userland}"
 SRC="${SRC:-${REPO}/userland}"
-TARGET=arm64-apple-mios14.0
+TOOLS="${REPO}/tools"
 
 mkdir -p "$OUT"
 
@@ -21,24 +25,45 @@ step() { printf '\n===== %s =====\n' "$*"; }
 step "toolchain"
 xcrun --sdk macosx --show-sdk-path
 clang --version | head -2
+for l in ld64.lld ld.lld; do
+	command -v "$l" >/dev/null 2>&1 && echo "have $l: $(command -v $l)"
+done
 
-# -nostdlib      no libSystem, no crt: the entry point is our own _start
+# -nostdlib          no libSystem, no crt: the entry point is our own _start
 # -fno-stack-protector  nothing to protect against without a libc
-# -no_pie        the kernel computes the entry point from __TEXT + entryoff,
-#                and it does not slide a non-PIE image
+# -fno-builtin        no libc builtins either
+# -Wl,-e,_start       the entry point
+COMMON=(-O2 -nostdlib -fno-stack-protector -fno-builtin -Wall)
+
+VARIANTS=(
+	"-target arm64-apple-macos11"
+	"-target arm64-apple-macos11 -Wl,-platform_version,macos,11.0,11.0"
+	"-target arm64-apple-macos13"
+	"-target arm64-apple-mios14.0 -Wl,-platform_version,ios,14.0,14.0"
+)
+
 build_one() {
 	local src="$1" out="$2"
-	local flags=(
-		-target "$TARGET"
-		-O2
-		-nostdlib
-		-fno-stack-protector
-		-fno-builtin
-		-Wall
-		-Wl,-no_pie
-		-Wl,-e,_start
-	)
-	clang "${flags[@]}" -o "$out" "$src" || return 1
+	local v
+
+	for v in "${VARIANTS[@]}"; do
+		# shellcheck disable=SC2086
+		echo "--- trying: clang ${COMMON[*]} ${v} -Wl,-e,_start -c $src"
+		# shellcheck disable=SC2086
+		if ! clang "${COMMON[@]}" ${v} -Wl,-e,_start -c -o "${out}.o" "$src"; then
+			continue
+		fi
+		echo "--- object file:"
+		python3 "${TOOLS}/macho_info.py" "${out}.o"
+		# shellcheck disable=SC2086
+		if clang "${COMMON[@]}" ${v} -Wl,-e,_start -o "$out" "${out}.o"; then
+			echo "--- linked with: ${v}"
+			python3 "${TOOLS}/macho_info.py" "$out"
+			return 0
+		fi
+		echo "--- link failed with: ${v}"
+	done
+	return 1
 }
 
 for prog in launchd hello; do
@@ -50,9 +75,4 @@ for prog in launchd hello; do
 	ls -l "${OUT}/${prog}.bin"
 done
 
-step "inspect"
-for prog in launchd hello; do
-	echo "--- ${prog}.bin"
-	otool -hv "${OUT}/${prog}.bin" | tail -3
-	otool -l "${OUT}/${prog}.bin" | grep -E "LC_MAIN|LC_UNIXTHREAD|LC_LOAD_DYLINKER|LC_SEGMENT_64|entryoff|vmaddr|fileoff|filesize" | head -30
-done
+step "done"
