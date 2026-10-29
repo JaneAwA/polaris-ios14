@@ -1,0 +1,333 @@
+diff --git a/bsd/kern/mach_loader.c b/bsd/kern/mach_loader.c
+--- a/bsd/kern/mach_loader.c
++++ b/bsd/kern/mach_loader.c
+@@ -92,6 +92,18 @@
+ 
+ #include <os/overflow.h>
+ 
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++extern void polaris_note(const char *tag, uint64_t a, uint64_t b, uint64_t c);
++/*
++ * POLARIS: number every place that can refuse an image, so that the panel
++ * says which one refused it.  The number is the order of the sites in the
++ * file.
++ */
++#define POLARIS_MF(n) polaris_note("MF", (uint64_t)(n), 0, 0)
++#else
++#define POLARIS_MF(n)
++#endif
++
+ /*
+  * XXX vm/pmap.h should not treat these prototypes as MACH_KERNEL_PRIVATE
+  * when KERNEL is defined.
+@@ -660,6 +672,7 @@
+ 		kret = task_start_halt(task);
+ 		if (kret != KERN_SUCCESS) {
+ 			vm_map_deallocate(map); /* will lose pmap reference too */
++			POLARIS_MF(1);
+ 			return LOAD_FAILURE;
+ 		}
+ 		proc_transcommit(p, 0);
+@@ -793,9 +806,13 @@
+ 
+ 	/* x[29], fp, lr, sp, pc -- the program counter is the 33rd word. */
+ 	result->entry_point = (user_addr_t)ts[32];
++	#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	polaris_note("U1", (uint64_t)ts[32], (uint64_t)result->validentry, 0);
++	#endif
+ 
+ 	/* The stack is the one the kernel maps for this process. */
+ 	if (thread_userstackdefault(&addr, result->is_64bit_addr) != KERN_SUCCESS) {
++		POLARIS_MF(2);
+ 		return LOAD_FAILURE;
+ 	}
+ 	result->user_stack_alloc_size = MAXSSIZ;
+@@ -820,6 +837,7 @@
+ 	uint32_t i, ncmds;
+ 
+ 	if (header->magic != MH_MAGIC_64) {
++		POLARIS_MF(3);
+ 		return LOAD_FAILURE;
+ 	}
+ 
+@@ -867,6 +885,7 @@
+ 	}
+ 
+ 	if (!have_text || (!have_main && !have_unixthread)) {
++		POLARIS_MF(4);
+ 		return LOAD_FAILURE;
+ 	}
+ 
+@@ -943,6 +962,7 @@
+ 	 *	Break infinite recursion
+ 	 */
+ 	if (depth > 2) {
++		POLARIS_MF(5);
+ 		return LOAD_FAILURE;
+ 	}
+ 
+@@ -967,11 +987,13 @@
+ 	switch (header->filetype) {
+ 	case MH_EXECUTE:
+ 		if (depth != 1 && depth != 3) {
++			POLARIS_MF(6);
+ 			return LOAD_FAILURE;
+ 		}
+ 		if (header->flags & MH_DYLDLINK) {
+ 			/* Check properties of dynamic executables */
+ 			if (!(header->flags & MH_PIE) && pie_required(header->cputype, header->cpusubtype & ~CPU_SUBTYPE_MASK)) {
++				POLARIS_MF(7);
+ 				return LOAD_FAILURE;
+ 			}
+ 			result->needs_dynlinker = TRUE;
+@@ -992,6 +1014,7 @@
+ 			 * page zero, for its entry point and for code signing.
+ 			 */
+ #else
++			POLARIS_MF(8);
+ 			return LOAD_FAILURE;
+ #endif /* ARM64_BOARD_CONFIG_POLARIS */
+ #endif /* !(DEVELOPMENT || DEBUG) */
+@@ -999,12 +1022,14 @@
+ 		break;
+ 	case MH_DYLINKER:
+ 		if (depth != 2) {
++			POLARIS_MF(9);
+ 			return LOAD_FAILURE;
+ 		}
+ 		is_dyld = TRUE;
+ 		break;
+ 
+ 	default:
++		POLARIS_MF(10);
+ 		return LOAD_FAILURE;
+ 	}
+ 
+@@ -1145,9 +1170,11 @@
+ 					/* Driver binaries have no entry point */
+ 					ret = setup_driver_main(thread, slide, result);
+ 				} else {
++					POLARIS_MF(11);
+ 					ret = LOAD_FAILURE;
+ 				}
+ 			} else if (!result->using_lcmain && result->validentry == 0) {
++				POLARIS_MF(12);
+ 				ret = LOAD_FAILURE;
+ 			}
+ 			if (ret != KERN_SUCCESS) {
+@@ -1405,6 +1432,7 @@
+ 				if ((depth == 1) && (dlp == 0)) {
+ 					dlp = (struct dylinker_command *)lcp;
+ 				} else {
++					POLARIS_MF(13);
+ 					ret = LOAD_FAILURE;
+ 				}
+ #endif /* ARM64_BOARD_CONFIG_POLARIS */
+@@ -1475,6 +1503,7 @@
+ 							}
+ 							if (cs_process_global_enforcement() ||
+ 							    (result->csflags & (CS_HARD | CS_KILL | CS_ENFORCEMENT))) {
++								POLARIS_MF(14);
+ 								ret = LOAD_FAILURE;
+ 							}
+ 							result->csflags &= ~CS_VALID;
+@@ -1552,6 +1581,10 @@
+ 				vmc = (struct version_min_command *) lcp;
+ 				ret = load_version(vmc, &found_version_cmd, imgp->ip_flags, result);
+ #if XNU_TARGET_OS_OSX
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++polaris_note("MP", (uint64_t)ret, (uint64_t)result->validentry,
++    (uint64_t)result->using_lcmain);
++#endif
+ 				if (ret == LOAD_SUCCESS) {
+ 					if (result->ip_platform == PLATFORM_IOS) {
+ 						vm_map_mark_alien(map);
+@@ -1604,6 +1637,7 @@
+ 
+ 	if (ret == LOAD_SUCCESS) {
+ 		if (!got_code_signatures && cs_process_global_enforcement()) {
++			POLARIS_MF(15);
+ 			ret = LOAD_FAILURE;
+ 		}
+ 
+@@ -1612,6 +1646,7 @@
+ #if defined(ARM64_BOARD_CONFIG_POLARIS)
+ 			ret = polaris_static_entry((vm_offset_t)addr, header, result, slide);
+ #else
++			POLARIS_MF(16);
+ 			ret = LOAD_FAILURE;
+ #endif
+ 		}
+@@ -1628,10 +1663,12 @@
+ 
+ 		if ((ret == LOAD_SUCCESS) && (depth == 1)) {
+ 			if (result->thread_count == 0) {
++				POLARIS_MF(17);
+ 				ret = LOAD_FAILURE;
+ 			}
+ #if CONFIG_ENFORCE_SIGNED_CODE
+ 			if (result->needs_dynlinker && !(result->csflags & CS_DYLD_PLATFORM)) {
++				POLARIS_MF(18);
+ 				ret = LOAD_FAILURE;
+ 			}
+ #endif
+@@ -1906,6 +1943,7 @@
+ 		/* The DSMOS pager can only be used by apple signed code */
+ 		struct cs_blob * blob = csvnode_get_blob(vp, file_off);
+ 		if (blob == NULL || !blob->csb_platform_binary || blob->csb_platform_path) {
++			POLARIS_MF(19);
+ 			return LOAD_FAILURE;
+ 		}
+ 
+@@ -1918,6 +1956,7 @@
+ 	}
+ 
+ 	if (kr != KERN_SUCCESS) {
++		POLARIS_MF(20);
+ 		return LOAD_FAILURE;
+ 	}
+ 	return LOAD_SUCCESS;
+@@ -2434,6 +2473,7 @@
+ 
+ 		if (ret != KERN_SUCCESS) {
+ 			DEBUG4K_ERROR("LOAD_FAILURE ret 0x%x\n", ret);
++			POLARIS_MF(21);
+ 			return LOAD_FAILURE;
+ 		}
+ 		return LOAD_SUCCESS;
+@@ -2565,6 +2605,7 @@
+ 				(void) mach_vm_deallocate(
+ 					kernel_map, tmp, delta_size);
+ 				DEBUG4K_ERROR("LOAD_FAILURE copyout 0x%llx 0x%llx\n", map_addr + scp->filesize, delta_size);
++				POLARIS_MF(22);
+ 				return LOAD_FAILURE;
+ 			}
+ 
+@@ -2773,6 +2814,7 @@
+ 		return LOAD_BADMACHO;
+ 	}
+ 	if (result->thread_count != 0) {
++		POLARIS_MF(23);
+ 		return LOAD_FAILURE;
+ 	}
+ 
+@@ -2806,6 +2848,7 @@
+ 	/* use default location for stack */
+ 	ret = thread_userstackdefault(&addr, result->is_64bit_addr);
+ 	if (ret != KERN_SUCCESS) {
++		POLARIS_MF(24);
+ 		return LOAD_FAILURE;
+ 	}
+ 
+@@ -2814,6 +2857,7 @@
+ 
+ 	if (result->using_lcmain || result->entry_point != MACH_VM_MIN_ADDRESS) {
+ 		/* Already processed LC_MAIN or LC_UNIXTHREAD */
++		POLARIS_MF(25);
+ 		return LOAD_FAILURE;
+ 	}
+ 
+@@ -2823,6 +2867,7 @@
+ 
+ 	ret = thread_state_initialize( thread );
+ 	if (ret != KERN_SUCCESS) {
++		POLARIS_MF(26);
+ 		return LOAD_FAILURE;
+ 	}
+ 
+@@ -2854,6 +2899,7 @@
+ 	/* use default location for stack */
+ 	ret = thread_userstackdefault(&addr, result->is_64bit_addr);
+ 	if (ret != KERN_SUCCESS) {
++		POLARIS_MF(27);
+ 		return LOAD_FAILURE;
+ 	}
+ 
+@@ -2863,6 +2909,7 @@
+ 
+ 	if (result->using_lcmain || result->entry_point != MACH_VM_MIN_ADDRESS) {
+ 		/* Already processed LC_MAIN or LC_UNIXTHREAD */
++		POLARIS_MF(28);
+ 		return LOAD_FAILURE;
+ 	}
+ 
+@@ -2870,6 +2917,7 @@
+ 
+ 	ret = thread_state_initialize( thread );
+ 	if (ret != KERN_SUCCESS) {
++		POLARIS_MF(29);
+ 		return LOAD_FAILURE;
+ 	}
+ 
+@@ -2896,6 +2944,7 @@
+ 		return LOAD_BADMACHO;
+ 	}
+ 	if (result->thread_count != 0) {
++		POLARIS_MF(30);
+ 		return LOAD_FAILURE;
+ 	}
+ 
+@@ -2935,6 +2984,7 @@
+ 
+ 		if (result->using_lcmain || result->entry_point != MACH_VM_MIN_ADDRESS) {
+ 			/* Already processed LC_MAIN or LC_UNIXTHREAD */
++			POLARIS_MF(31);
+ 			return LOAD_FAILURE;
+ 		}
+ 
+@@ -2978,6 +3028,7 @@
+ 		local_ts_size = total_size;
+ 		local_ts = kalloc(local_ts_size);
+ 		if (local_ts == NULL) {
++			POLARIS_MF(32);
+ 			return LOAD_FAILURE;
+ 		}
+ 		memcpy(local_ts, ts, local_ts_size);
+@@ -3065,6 +3116,7 @@
+ 		{
+ 			ret = thread_userstack(thread, flavor, (thread_state_t)ts, size, user_stack, customstack, result->is_64bit_data);
+ 			if (ret != KERN_SUCCESS) {
++				POLARIS_MF(33);
+ 				return LOAD_FAILURE;
+ 			}
+ 		}
+@@ -3115,6 +3167,7 @@
+ 		 */
+ 		ret = thread_entrypoint(thread, flavor, (thread_state_t)ts, size, entry_point);
+ 		if (ret != KERN_SUCCESS) {
++			POLARIS_MF(34);
+ 			return LOAD_FAILURE;
+ 		}
+ 		ts += size;     /* ts is a (uint32_t *) */
+@@ -3343,6 +3396,7 @@
+ 
+ 		if (error != EAGAIN) {
+ 			printf("load_code_signature: revalidation failed: %d\n", error);
++			POLARIS_MF(35);
+ 			ret = LOAD_FAILURE;
+ 			goto out;
+ 		}
+@@ -3393,6 +3447,7 @@
+ 			ubc_cs_blob_deallocate(addr, blob_size);
+ 			addr = 0;
+ 		}
++		POLARIS_MF(36);
+ 		ret = LOAD_FAILURE;
+ 		goto out;
+ 	} else {
+@@ -3473,6 +3528,7 @@
+ 		return LOAD_SUCCESS;
+ 	}
+ 	if (NULL == text_crypter_create) {
++		POLARIS_MF(37);
+ 		return LOAD_FAILURE;
+ 	}
+ 
+@@ -3482,6 +3538,7 @@
+ 	error = vn_getpath(vp, vpath, &len);
+ 	if (error) {
+ 		zfree(ZV_NAMEI, vpath);
++		POLARIS_MF(38);
+ 		return LOAD_FAILURE;
+ 	}
+ 
