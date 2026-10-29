@@ -4,7 +4,7 @@
  */
 #include "polaris.h"
 
-void _start(void)
+void polaris_start(void)
 {
 	static const char hello[] = "POLARIS HELLO FROM USER SPACE\n";
 	int fd;

@@ -57,7 +57,7 @@ def show(path):
         print('  magic %08x (not MH_MAGIC_64)' % magic)
         return
     cputype, cpusub, filetype, ncmds, sizeofcmds, flags, _ = \
-        struct.unpack_from('<IiiIIII', d, 0)
+        struct.unpack_from('<iiIIII', d, 4)
     print('  cputype %#x cpusub %#x filetype %d ncmds %d sizeofcmds %d flags %#x'
           % (cputype & 0xffffffff, cpusub & 0xffffffff, filetype, ncmds,
              sizeofcmds, flags))

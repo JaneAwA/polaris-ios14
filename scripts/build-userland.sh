@@ -29,10 +29,14 @@ for l in ld64.lld ld.lld; do
 	command -v "$l" >/dev/null 2>&1 && echo "have $l: $(command -v $l)"
 done
 
-# -nostdlib          no libSystem, no crt: the entry point is our own _start
+# -nostdlib          no libSystem, no crt: the entry point is our own
 # -fno-stack-protector  nothing to protect against without a libc
 # -fno-builtin        no libc builtins either
-# -Wl,-e,_start       the entry point
+# -Wl,-e,_polaris_start  the entry point.  The Mach-O symbol of the C
+#                       function polaris_start is _polaris_start: the linker
+#                       wants the name with the underscore the object
+#                       format adds, so asking for _start would look for a C
+#                       function called "start" and fail.
 COMMON=(-O2 -nostdlib -fno-stack-protector -fno-builtin -Wall)
 
 VARIANTS=(
@@ -48,17 +52,27 @@ build_one() {
 
 	for v in "${VARIANTS[@]}"; do
 		# shellcheck disable=SC2086
-		echo "--- trying: clang ${COMMON[*]} ${v} -Wl,-e,_start -c $src"
+		echo "--- trying: clang ${COMMON[*]} ${v} -Wl,-e,_polaris_start -c $src"
 		# shellcheck disable=SC2086
-		if ! clang "${COMMON[@]}" ${v} -Wl,-e,_start -c -o "${out}.o" "$src"; then
+		if ! clang "${COMMON[@]}" ${v} -Wl,-e,_polaris_start -c -o "${out}.o" "$src"; then
 			continue
 		fi
-		echo "--- object file:"
+		echo "--- object symbols:"
+	nm -a "${out}.o" 2>/dev/null | head -20 || true
+	echo "--- object file:"
 		python3 "${TOOLS}/macho_info.py" "${out}.o"
 		# shellcheck disable=SC2086
-		if clang "${COMMON[@]}" ${v} -Wl,-e,_start -o "$out" "${out}.o"; then
+		if clang "${COMMON[@]}" ${v} -Wl,-e,_polaris_start -o "$out" "${out}.o"; then
 			echo "--- linked with: ${v}"
 			python3 "${TOOLS}/macho_info.py" "$out"
+			# There is no dyld on this board, so the program must not
+			# need one: every symbol has to be defined in the file.
+			undef="$(nm -u "$out" 2>/dev/null | grep -v dyld_stub_binder || true)"
+			if [ -n "$undef" ]; then
+				echo "--- undefined symbols, the program would need dyld:"
+				echo "$undef"
+				continue
+			fi
 			return 0
 		fi
 		echo "--- link failed with: ${v}"

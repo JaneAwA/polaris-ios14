@@ -19,7 +19,7 @@ static void say(int fd, const char *s)
 	p_puts(fd, s);
 }
 
-void _start(void)
+void polaris_start(void)
 {
 	static const char alive[] = "POLARIS LAUNCHD ALIVE\n";
 	static const char forking[] = "POLARIS LAUNCHD: forking /sbin/hello\n";
