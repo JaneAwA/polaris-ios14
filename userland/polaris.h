@@ -25,6 +25,7 @@ __attribute__((weak)) void dyld_stub_binder(void) { }
 #define PSYS_open      5
 #define PSYS_close     6
 #define PSYS_wait4     7
+#define PSYS_getpid   20
 #define PSYS_execve   59
 
 #define PO_RDONLY   0x0000
@@ -93,6 +94,16 @@ static inline long p_execve(const char *path, char *const argv[], char *const en
 static inline long p_wait4(int pid, int *status, int options)
 {
 	return psys_ret(PSYS_wait4, pid, (long)status, options);
+}
+
+/*
+ * Lets a probe line say which process printed it.  Without this a child
+ * that came back from fork() with the parent's return value is
+ * indistinguishable from the parent itself.
+ */
+static inline long p_getpid(void)
+{
+	return psys_ret(PSYS_getpid, 0, 0, 0);
 }
 
 static inline void p_exit(int code)

@@ -20,22 +20,25 @@ static void say(int fd, const char *s)
 }
 
 /*
- * The screen is the only diagnostic channel, and "child forked" used to be
- * printed whether fork() worked or not -- a failed fork returns -errno and
- * fell straight through to that message.  Print the raw value instead, so a
- * photo tells us which of the two happened.
+ * Hex, with the sign where a human expects it.
+ *
+ * The first version wrote the '-' into the top of the buffer and then
+ * prepended the digits, so -ECHILD came out as "0xa-" and read like a
+ * stray trailing dash.  Same bug made a failed fork look like a positive
+ * return value.
  */
 static void say_num(int fd, long v)
 {
 	static const char digits[] = "0123456789abcdef";
 	char buf[24];
 	int i = 23;
+	int neg = 0;
 
 	buf[i] = '\0';
 	if (v < 0) {
 		/* -errno: print the errno, not its two's complement. */
 		v = -v;
-		buf[--i] = '-';
+		neg = 1;
 	}
 	do {
 		buf[--i] = digits[v & 0xfl];
@@ -43,7 +46,18 @@ static void say_num(int fd, long v)
 	} while (v != 0);
 	buf[--i] = 'x';
 	buf[--i] = '0';
+	if (neg) {
+		buf[--i] = '-';
+	}
 	p_puts(fd, &buf[i]);
+}
+
+/* Print "label <value>" on one line; used by every probe below. */
+static void say_val(int fd, const char *label, long v)
+{
+	say(fd, label);
+	say_num(fd, v);
+	say(fd, "\n");
 }
 
 void polaris_start(void)
@@ -54,12 +68,15 @@ void polaris_start(void)
 	static const char reaped[] = "POLARIS LAUNCHD: child reaped\n";
 	static const char failed[] = "POLARIS LAUNCHD: execve failed\n";
 	static const char running[] = "POLARIS LAUNCHD: child running\n";
+	static const char direct[] = "POLARIS LAUNCHD: no waitable child, exec direct\n";
 	char *argv[2];
 	char *envp[2];
 	int fd;
 	long pid;
+	long me;
 	long r;
 	int waits = 0;
+	int tried_direct = 0;
 
 	fd = p_open(CONSOLE, PO_WRONLY, 0);
 	if (fd < 0) {
@@ -70,25 +87,28 @@ void polaris_start(void)
 		fd = 1;
 	}
 
+	argv[0] = (char *)"/sbin/hello";
+	argv[1] = 0;
+	envp[0] = (char *)"PATH=/sbin:/usr/bin";
+	envp[1] = 0;
+
+	me = p_getpid();
 	say(fd, alive);
+	say_val(fd, "POLARIS LAUNCHD: my pid = ", me);
 	say(fd, forking);
 
 	pid = p_fork();
 	say(fd, "POLARIS LAUNCHD: fork -> ");
 	say_num(fd, pid);
+	say(fd, " pid ");
+	say_num(fd, p_getpid());
 	say(fd, "\n");
 
 	if (pid == 0) {
 		/* Reaching this line proves fork returned to user space. */
 		say(fd, running);
-		argv[0] = (char *)"/sbin/hello";
-		argv[1] = 0;
-		envp[0] = (char *)"PATH=/sbin:/usr/bin";
-		envp[1] = 0;
 		r = p_execve("/sbin/hello", argv, envp);
-		say(fd, "POLARIS LAUNCHD: execve -> ");
-		say_num(fd, r);
-		say(fd, "\n");
+		say_val(fd, "POLARIS LAUNCHD: execve -> ", r);
 		say(fd, failed);
 		p_exit(1);
 	}
@@ -105,15 +125,25 @@ void polaris_start(void)
 		r = p_wait4(-1, &status, 0);
 		if (r > 0) {
 			say(fd, reaped);
-		} else if (waits < 3) {
-			/*
-			 * ECHILD on a machine with no children would spin here
-			 * silently, which is exactly how the last boot ended.
-			 */
+			continue;
+		}
+
+		/*
+		 * ECHILD here means there is no child to wait for at all, which
+		 * is what a fork that hands the child the parent's return value
+		 * looks like from the outside: the "child" is the parent.  Do
+		 * not sit in that loop forever -- exec the payload directly so
+		 * one boot still tells us whether a second exec works.
+		 */
+		if (waits < 3) {
 			waits++;
-			say(fd, "POLARIS LAUNCHD: wait -> ");
-			say_num(fd, r);
-			say(fd, "\n");
+			say_val(fd, "POLARIS LAUNCHD: wait -> ", r);
+		}
+		if (waits >= 3 && !tried_direct) {
+			tried_direct = 1;
+			say(fd, direct);
+			r = p_execve("/sbin/hello", argv, envp);
+			say_val(fd, "POLARIS LAUNCHD: direct execve -> ", r);
 		}
 	}
 }
