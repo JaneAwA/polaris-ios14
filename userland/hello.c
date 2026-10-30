@@ -36,6 +36,14 @@ static void say_num(int fd, long v)
 	p_puts(fd, &buf[i]);
 }
 
+/* Print "label <value>" on one line; used by every probe below. */
+static void say_val(int fd, const char *label, long v)
+{
+	say(fd, label);
+	say_num(fd, v);
+	say(fd, "\n");
+}
+
 void polaris_start(void)
 {
 	static const char hello[] = "POLARIS HELLO FROM USER SPACE\n";

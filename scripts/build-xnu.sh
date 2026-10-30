@@ -88,23 +88,29 @@ fi
 step "userland"
 # The root filesystem the kernel carries is built around the compiled
 # userland, so it cannot live in the patch series: compile it here and patch
-# the result in afterwards.  If any of this fails the kernel still builds --
-# the image from the patch series (the hand written stub) stays in place.
-if bash "${REPO}/scripts/build-userland.sh"; then
-	if python3 "${REPO}/tools/mkuserland.py" --xnu "$SRC" \
-		--binaries "${REPO}/out/userland" --patch "${REPO}/out/userland.patch"; then
-		if git -C "$SRC" apply -p1 "${REPO}/out/userland.patch"; then
-			echo "ok  userland"
-		else
-			echo "WARNING: the userland patch did not apply; keeping the stub image"
-			git -C "$SRC" checkout -- bsd/kern/bsd_init.c
-		fi
-	else
-		echo "WARNING: could not build the userland image; keeping the stub image"
-	fi
-else
-	echo "WARNING: the userland did not compile; keeping the stub image"
+# the result in afterwards.
+#
+# Every failure below is fatal on purpose.  The image that comes from the
+# patch series is a 20 KB stub holding nothing but /sbin/launchd, so a build
+# that "keeps the stub" still succeeds and still produces a kernel -- one
+# that boots to a screen looking like a hang, with no /sbin/hello in the
+# table and no clue in the log.  That is exactly what happened when hello.c
+# stopped compiling: CI went green and the panel showed a system that could
+# not exec its own payload.
+if ! bash "${REPO}/scripts/build-userland.sh"; then
+	echo "ERROR: the userland did not compile"
+	exit 1
 fi
+if ! python3 "${REPO}/tools/mkuserland.py" --xnu "$SRC" \
+	--binaries "${REPO}/out/userland" --patch "${REPO}/out/userland.patch"; then
+	echo "ERROR: could not build the userland image"
+	exit 1
+fi
+if ! git -C "$SRC" apply -p1 "${REPO}/out/userland.patch"; then
+	echo "ERROR: the userland patch did not apply"
+	exit 1
+fi
+echo "ok  userland"
 
 step "closed kernel headers"
 # xnu-7195 includes <os/firehose_buffer_private.h>, which is not part of the
@@ -207,5 +213,41 @@ if ls "${REPO}/out"/kernel.release.* >/dev/null 2>&1; then
 	echo "KERNEL BUILT: $(cd "${REPO}/out" && ls kernel.release.* | tr '\n' ' ')"
 else
 	echo "NO KERNEL IN out/ -- see build.log"
+	exit 1
 fi
+
+# The kernel carries the root filesystem as a table embedded in bsd_init.c, so
+# a build can succeed and still ship a table with nothing in it.  Read the
+# table back: if the payload is not listed, the kernel boots to a screen that
+# looks like a hang and nothing else says why.
+K="$(ls "${REPO}/out"/kernel.release.* 2>/dev/null | head -1)"
+if ! python3 - "$K" <<'PY'
+import struct
+import sys
+
+path = sys.argv[1]
+data = open(path, 'rb').read()
+i = data.find(b'POLF')
+if i < 0:
+    sys.exit('no POLF table in %s' % path)
+_magic, _ver, nfiles, _fid, _off, _size = struct.unpack_from('<IIIIQQ', data, i)
+off = i + 32
+names = []
+for _ in range(nfiles):
+    nl = struct.unpack_from('<H', data, off)[0]
+    off += 44
+    names.append(data[off:off + nl].decode('ascii', 'replace'))
+    off += nl
+
+missing = [p for p in ('/sbin/launchd', '/sbin/hello') if p not in names]
+if missing:
+    sys.exit('root filesystem is missing %s\n  table: %s'
+             % (', '.join(missing), ' '.join(names)))
+print('root filesystem ok: %d entries, both payloads present' % nfiles)
+PY
+then
+	echo "ERROR: the kernel does not carry a usable root filesystem"
+	exit 1
+fi
+
 exit "$rc"
