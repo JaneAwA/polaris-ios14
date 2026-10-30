@@ -89,26 +89,46 @@ void polaris_start(void)
 	char *argv[2];
 	char *envp[2];
 	int fd;
+	int cfd;
 	long pid;
 	long r;
 	int status;
 
 	fd = p_open(CONSOLE, PO_WRONLY, 0);
+	cfd = fd;
 	if (fd < 0) {
 		/*
 		 * No console is not fatal: the process still has to stay
 		 * alive, or the kernel panics with "initproc exited".
 		 */
 		fd = 1;
+	} else {
+		/*
+		 * Pin the console onto the three descriptors every program
+		 * assumes.  open() hands out 3 here, so a child that execs and
+		 * writes to fd 1 -- which is what /sbin/hello does -- would be
+		 * writing to a descriptor that was never opened: EBADF, no
+		 * bytes, no message, exit status 0.  That looks exactly like
+		 * "the second process died", and it is why the panel showed a
+		 * hello that never printed a single character.
+		 */
+		(void)p_dup2(fd, 0);
+		(void)p_dup2(fd, 1);
+		(void)p_dup2(fd, 2);
+		if (fd > 2) {
+			(void)p_close(fd);
+		}
+		fd = 1;
 	}
+
+	say(fd, alive);
+	say_val(fd, "POLARIS LAUNCHD: my pid = ", p_getpid());
+	say_val(fd, "POLARIS LAUNCHD: console open = ", cfd);
 
 	argv[0] = (char *)"/sbin/hello";
 	argv[1] = 0;
 	envp[0] = (char *)"PATH=/sbin:/usr/bin";
 	envp[1] = 0;
-
-	say(fd, alive);
-	say_val(fd, "POLARIS LAUNCHD: my pid = ", p_getpid());
 
 	/* Experiment 1: a child that borrows this task until it execves. */
 	say(fd, vforking);

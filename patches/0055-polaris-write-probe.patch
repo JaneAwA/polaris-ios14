@@ -1,0 +1,66 @@
+diff --git a/bsd/kern/sys_generic.c b/bsd/kern/sys_generic.c
+index 1d88f75..71c25dc 100644
+--- a/bsd/kern/sys_generic.c
++++ b/bsd/kern/sys_generic.c
+@@ -97,6 +97,14 @@
+ #include <sys/proc.h>
+ #include <sys/kauth.h>
+ 
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++/*
++ * POLARIS: pexpert/arm/pe_serial.c.  One labelled line of three numbers on
++ * the panel, the only console this board has.
++ */
++extern void polaris_note(const char *tag, uint64_t a, uint64_t b, uint64_t c);
++#endif
++
+ #include <machine/smp.h>
+ #include <mach/mach_types.h>
+ #include <kern/kern_types.h>
+@@ -503,6 +511,22 @@ write_nocancel(struct proc *p, struct write_nocancel_args *uap, user_ssize_t *re
+ 
+ 	error = fp_lookup(p, fd, &fp, 0);
+ 	if (error) {
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++		/*
++		 * POLARIS: a write to a descriptor that was never opened.  The
++		 * kernel answers EBADF and not one byte reaches the panel, so a
++		 * program that "printed nothing" and a program that died before
++		 * it could print look the same from the outside.  This line is
++		 * what tells the two apart: the first number is the descriptor,
++		 * the second the errno.
++		 */
++		static int polaris_wd_n;
++
++		if (polaris_wd_n < 20 && fd >= 0 && fd <= 5) {
++			polaris_wd_n++;
++			polaris_note("WD", (uint64_t)fd, (uint64_t)(int64_t)error, 0);
++		}
++#endif /* ARM64_BOARD_CONFIG_POLARIS */
+ 		return error;
+ 	}
+ 	if ((fp->f_flag & FWRITE) == 0) {
+@@ -519,6 +543,23 @@ write_nocancel(struct proc *p, struct write_nocancel_args *uap, user_ssize_t *re
+ 		    (off_t)-1, 0, retval);
+ 	}
+ 	fp_drop(p, fd, fp, 0);
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	{
++		/*
++		 * POLARIS: what a write actually returned, with the descriptor it
++		 * went to.  "WF 1 0 1a" says the bytes left the process through
++		 * fd 1; an error here with nothing on the panel puts the problem
++		 * between the descriptor and the console instead.
++		 */
++		static int polaris_wf_n;
++
++		if (polaris_wf_n < 20 && fd >= 0 && fd <= 5) {
++			polaris_wf_n++;
++			polaris_note("WF", (uint64_t)fd, (uint64_t)(int64_t)error,
++			    (uint64_t)(uint32_t)*retval);
++		}
++	}
++#endif /* ARM64_BOARD_CONFIG_POLARIS */
+ 	return error;
+ }
+ 

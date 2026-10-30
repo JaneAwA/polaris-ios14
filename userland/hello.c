@@ -51,13 +51,38 @@ static void say_val(int fd, const char *label, long v)
 void polaris_start(void)
 {
 	static const char hello[] = "POLARIS HELLO FROM USER SPACE\n";
+	static const char mark[] = "POLARIS HELLO MARK\n";
 	long w;
 	int fd;
+	int probe;
 
 	fd = p_open("/dev/console", PO_WRONLY, 0);
 	if (fd < 0) {
+		/*
+		 * No console from open(): fall back to whichever descriptor
+		 * survived execve().  init pins the console onto 0/1/2 before
+		 * it forks, so 1 is expected to be the one that answers; the
+		 * loop is there because "nothing was printed" from this side
+		 * of the panel looks the same whether the write failed with
+		 * EBADF or the process never ran at all.  The marker is
+		 * written before any other output, so a single line on the
+		 * panel tells both that this image is alive and which
+		 * descriptor carried the bytes.
+		 */
+		for (probe = 1; probe <= 5; probe++) {
+			if (p_write(probe, mark, sizeof(mark) - 1) ==
+			    (long)(sizeof(mark) - 1)) {
+				fd = probe;
+				break;
+			}
+		}
+	}
+	if (fd < 0) {
 		fd = 1;
 	}
+
+	/* Negative means the open failed; the value is the descriptor used. */
+	say_val(fd, "POLARIS HELLO fd = ", fd);
 	say(fd, "POLARIS HELLO pid ");
 	say_num(fd, p_getpid());
 	say(fd, "\n");

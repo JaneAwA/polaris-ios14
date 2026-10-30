@@ -28,6 +28,7 @@ __attribute__((weak)) void dyld_stub_binder(void) { }
 #define PSYS_getpid   20
 #define PSYS_execve   59
 #define PSYS_vfork    66
+#define PSYS_dup2     90
 #define PSYS_poll    230
 
 #define PO_RDONLY   0x0000
@@ -81,6 +82,22 @@ static inline long p_write(int fd, const void *buf, unsigned long n)
 static inline int p_close(int fd)
 {
 	return (int)psys_ret(PSYS_close, fd, 0, 0);
+}
+
+/*
+ * One console, three well-known descriptors.
+ *
+ * A child that execve()s gets this process's descriptors, but nothing in the
+ * kernel guarantees which slot the console landed in: init takes it from
+ * whatever open() hands out (normally 3), while a freshly exec'd image writes
+ * to 1 because that is what every Unix program does.  Writing to a descriptor
+ * that was never opened fails with EBADF and prints nothing at all, which on
+ * this panel is indistinguishable from a process that died -- so init pins the
+ * console onto 0/1/2 before it starts any child.
+ */
+static inline long p_dup2(int from, int to)
+{
+	return psys_ret(PSYS_dup2, from, to, 0);
 }
 
 /*
