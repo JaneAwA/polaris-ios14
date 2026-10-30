@@ -1,0 +1,35 @@
+diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
+index e9dc754..57bfaa7 100644
+--- a/bsd/kern/kern_exit.c
++++ b/bsd/kern/kern_exit.c
+@@ -154,6 +154,15 @@ void dtrace_proc_exit(proc_t p);
+ #include <sys/syscall.h>
+ #endif /* CONFIG_MACF */
+ 
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++/*
++ * POLARIS: pexpert/arm/pe_serial.c.  One labelled line of three numbers; the
++ * panel is the only console this board has, and a process that disappears is
++ * otherwise silent.
++ */
++extern void polaris_note(const char *tag, uint64_t a, uint64_t b, uint64_t c);
++#endif
++
+ #if CONFIG_MEMORYSTATUS
+ static void proc_memorystatus_remove(proc_t p);
+ #endif /* CONFIG_MEMORYSTATUS */
+@@ -980,6 +989,14 @@ exit_with_reason(proc_t p, int rv, int *retval, boolean_t thread_can_terminate,
+ 
+ 	p->p_lflag |= P_LEXIT;
+ 	p->p_xstat = rv;
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	/*
++	 * POLARIS: why did that process go away?  The wait status is what the
++	 * parent will see: low byte is the signal when the low seven bits are
++	 * non-zero, otherwise it is (exit code << 8).
++	 */
++	polaris_note("EX", (uint64_t)p->p_pid, (uint64_t)(uint32_t)rv, 0);
++#endif
+ 	p->p_lflag |= jetsam_flags;
+ 
+ 	proc_transend(p, 1);

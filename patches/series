@@ -47,3 +47,4 @@
 0047-polaris-console-and-unixthread.patch
 0048-polaris-load-failure-probes.patch
 0049-polaris-fault-probes.patch
+0050-polaris-exit-probe.patch

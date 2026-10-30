@@ -39,8 +39,8 @@ static void say_num(int fd, long v)
 void polaris_start(void)
 {
 	static const char hello[] = "POLARIS HELLO FROM USER SPACE\n";
+	long w;
 	int fd;
-	int status;
 
 	fd = p_open("/dev/console", PO_WRONLY, 0);
 	if (fd < 0) {
@@ -49,15 +49,21 @@ void polaris_start(void)
 	say(fd, "POLARIS HELLO pid ");
 	say_num(fd, p_getpid());
 	say(fd, "\n");
-	say(fd, hello);
+
+	/*
+	 * Print the write() result as well: a short or negative count here
+	 * tells a console that refused the bytes apart from a process that
+	 * died before it got the chance to send them.
+	 */
+	w = p_write(fd, hello, sizeof(hello) - 1);
+	say_val(fd, "POLARIS HELLO write -> ", w);
 
 	/*
 	 * Stay alive without spinning: wait4() on an empty child list returns
-	 * immediately, so it costs one cheap syscall per iteration and keeps
-	 * the CPU available (cpus=1) for the console to drain.
+	 * immediately, so sleeping is what keeps the CPU free (cpus=1) for
+	 * the console to drain.
 	 */
 	for (;;) {
-		status = 0;
-		(void)p_wait4(-1, &status, 0);
+		p_sleep_ms(500);
 	}
 }

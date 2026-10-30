@@ -65,7 +65,6 @@ void polaris_start(void)
 	static const char alive[] = "POLARIS LAUNCHD ALIVE\n";
 	static const char forking[] = "POLARIS LAUNCHD: forking /sbin/hello\n";
 	static const char forked[] = "POLARIS LAUNCHD: child forked\n";
-	static const char reaped[] = "POLARIS LAUNCHD: child reaped\n";
 	static const char failed[] = "POLARIS LAUNCHD: execve failed\n";
 	static const char running[] = "POLARIS LAUNCHD: child running\n";
 	static const char direct[] = "POLARIS LAUNCHD: no waitable child, exec direct\n";
@@ -126,7 +125,14 @@ void polaris_start(void)
 
 		r = p_wait4(-1, &status, 0);
 		if (r > 0) {
-			say(fd, reaped);
+			/*
+			 * The raw status is the only witness to why the child went
+			 * away: low byte is the signal when WIFSIGNALED, otherwise
+			 * (code << 8).  Print both the pid and the number.
+			 */
+			say_val(fd, "POLARIS LAUNCHD: reaped pid ", r);
+			say_val(fd, "POLARIS LAUNCHD: reaped status ", status);
+			had_child = 1;
 			continue;
 		}
 
@@ -148,5 +154,10 @@ void polaris_start(void)
 			r = p_execve("/sbin/hello", argv, envp);
 			say_val(fd, "POLARIS LAUNCHD: direct execve -> ", r);
 		}
+		/*
+		 * Block, do not spin: cpus=1, and a process that loops on a
+		 * syscall that returns immediately starves the console.
+		 */
+		p_sleep_ms(200);
 	}
 }

@@ -27,6 +27,7 @@ __attribute__((weak)) void dyld_stub_binder(void) { }
 #define PSYS_wait4     7
 #define PSYS_getpid   20
 #define PSYS_execve   59
+#define PSYS_poll    230
 
 #define PO_RDONLY   0x0000
 #define PO_WRONLY   0x0001
@@ -135,6 +136,31 @@ static inline void p_exit(int code)
 	for (;;) {
 		/* exit() does not return; if it somehow does, keep the pid alive. */
 	}
+}
+
+/*
+ * Sleep without burning the only CPU.
+ *
+ * There is no nanosleep() stub here and no libSystem to build one on, but
+ * poll() with a single negative descriptor is the oldest trick in the book:
+ * descriptors below zero are ignored, so the call does nothing except wait
+ * out the timeout.  A pid that spins in wait4() instead would keep the
+ * single CPU busy forever and freeze the console.
+ */
+struct p_pollfd {
+	int fd;
+	short events;
+	short revents;
+};
+
+static inline void p_sleep_ms(int ms)
+{
+	struct p_pollfd pfd;
+
+	pfd.fd = -1;
+	pfd.events = 0;
+	pfd.revents = 0;
+	(void)psys_ret(PSYS_poll, (long)&pfd, 1, ms);
 }
 
 static inline unsigned long p_strlen(const char *s)
