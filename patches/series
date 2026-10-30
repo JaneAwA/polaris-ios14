@@ -50,3 +50,4 @@
 0050-polaris-exit-probe.patch
 0051-polaris-user-fault-probes.patch
 0052-polaris-user-abort-detail.patch
+0053-polaris-exec-stack-probes.patch

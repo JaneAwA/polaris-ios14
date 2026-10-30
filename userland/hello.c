@@ -17,7 +17,9 @@ static void say(int fd, const char *s)
 static void say_num(int fd, long v)
 {
 	static const char digits[] = "0123456789abcdef";
-	char buf[24];
+	/* Static buffer: see the note in launchd.c -- the first write to an
+	 * automatic buffer is the first thing that dies on a bad stack. */
+	static char buf[24];
 	int i = 23;
 	int neg = 0;
 

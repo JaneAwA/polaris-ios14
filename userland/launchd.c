@@ -10,18 +10,16 @@
  *
  * Two experiments, in this order:
  *
- *   1. vfork().  The child borrows this task and this address space, so
- *      nothing has to be copied and no second pmap has to be built before
- *      execve() gives the child a task of its own.
- *   2. fork().  A real child with a copied address space, which is the path
- *      that has been failing: the child disappears before it prints its
- *      return value.
+ *   1. vfork() followed by execve().  The child borrows this task and this
+ *      address space, so nothing has to be copied and the kernel only builds
+ *      a task when the child execs -- the one path that has been getting as
+ *      far as printing "HELLO pid" before the number itself.
+ *   2. fork() with no execve() at all.  The child keeps this code and this
+ *      stack, so it separates "a second process cannot touch its stack"
+ *      from "something execve() builds is wrong".
  *
- * Running both in one boot says whether the problem is "a second process"
- * or specifically "a copied address space".  The payload exits on its own
- * after a moment so that the parent gets control back and the second
- * experiment can run; init itself must never exit, because the kernel
- * panics when pid 1 goes away.
+ * init itself must never exit, because the kernel panics when pid 1 goes
+ * away, so both children are waited for and then the process just reaps.
  */
 #include "polaris.h"
 
@@ -43,7 +41,14 @@ static void say(int fd, const char *s)
 static void say_num(int fd, long v)
 {
 	static const char digits[] = "0123456789abcdef";
-	char buf[24];
+	/*
+	 * Static, not automatic: an earlier build died on the very first
+	 * write to this buffer, which is what a broken user stack looks
+	 * like.  With the buffer in .bss the number still comes out, so
+	 * "the process cannot print" stops being indistinguishable from
+	 * "the process cannot touch its stack".
+	 */
+	static char buf[24];
 	int i = 23;
 	int neg = 0;
 
@@ -77,7 +82,8 @@ void polaris_start(void)
 {
 	static const char alive[] = "POLARIS LAUNCHD ALIVE\n";
 	static const char vforking[] = "POLARIS LAUNCHD: vfork /sbin/hello\n";
-	static const char forking[] = "POLARIS LAUNCHD: fork /sbin/hello\n";
+	static const char forking[] = "POLARIS LAUNCHD: fork (no exec)\n";
+	static const char child_alive[] = "POLARIS CHILD: alive, my pid = ";
 	static const char failed[] = "POLARIS LAUNCHD: execve failed\n";
 	static const char running[] = "POLARIS LAUNCHD: child running\n";
 	char *argv[2];
@@ -117,16 +123,24 @@ void polaris_start(void)
 		p_exit(1);
 	}
 
-	/* Experiment 2: a real child, i.e. a copied address space. */
+	/*
+	 * Experiment 2: fork() without execve().
+	 *
+	 * The child gets a copy of this address space and keeps running this
+	 * very code, stack bytes included.  If it manages to print a number,
+	 * a copied address space and its stack are fine, and whatever breaks
+	 * belongs to what execve() builds -- which is a much smaller place to
+	 * look than "the second process".
+	 */
 	say(fd, forking);
 	pid = p_fork();
 	say_val(fd, "POLARIS LAUNCHD: fork -> ", pid);
 	if (pid == 0) {
-		say(fd, running);
-		r = p_execve("/sbin/hello", argv, envp);
-		say_val(fd, "POLARIS LAUNCHD: fork execve -> ", r);
-		say(fd, failed);
-		p_exit(1);
+		say(fd, child_alive);
+		say_num(fd, p_getpid());
+		say(fd, "\n");
+		p_sleep_ms(150);
+		p_exit(0);
 	}
 
 	/*

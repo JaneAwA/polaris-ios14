@@ -1,0 +1,107 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+index 0cf5e7b..dc05737 100644
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -6322,6 +6322,16 @@ create_unix_stack(vm_map_t map, load_result_t* load_result,
+ 
+ 		load_result->user_stack_alloc = (user_addr_t)addr;
+ 
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++		/*
++		 * POLARIS: where the stack actually landed, and how much of it
++		 * the guard covers.  If the address here is not the one the
++		 * thread's sp ends up at, the stack the process writes to is a
++		 * different region from the one we just made.
++		 */
++		polaris_note("UQ", (uint64_t)kr, (uint64_t)addr, (uint64_t)size);
++#endif
++
+ 		/*
+ 		 * And prevent access to what's above the current stack
+ 		 * size limit for this process.
+@@ -6339,12 +6349,42 @@ create_unix_stack(vm_map_t map, load_result_t* load_result,
+ 		    prot_size,
+ 		    FALSE,
+ 		    VM_PROT_NONE);
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++		polaris_note("UR", (uint64_t)kr, (uint64_t)prot_size,
++		    (uint64_t)load_result->user_stack_size);
++#endif
+ 		if (kr != KERN_SUCCESS) {
+ 			(void)mach_vm_deallocate(map, addr, size);
+ 			return kr;
+ 		}
+ 	}
+ 
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	{
++		/*
++		 * POLARIS: ask the map what it thinks lives at the very top of
++		 * the stack -- the bytes argv/envp were just written to, and the
++		 * first ones the process will touch.  A start/end of 0 means no
++		 * entry at all, which is the difference between "the page is
++		 * there but the pmap never got it" and "the region is missing".
++		 */
++		vm_map_entry_t  us_entry = VM_MAP_ENTRY_NULL;
++		vm_map_offset_t us_start = 0;
++		vm_map_offset_t us_end = 0;
++		vm_prot_t       us_prot = 0;
++
++		if (vm_map_lookup_entry(map, (vm_map_offset_t)(user_stack - 8), &us_entry) &&
++		    us_entry != VM_MAP_ENTRY_NULL) {
++			us_start = us_entry->vme_start;
++			us_end = us_entry->vme_end;
++			us_prot = us_entry->protection;
++		}
++		polaris_note("US", (uint64_t)user_stack, (uint64_t)us_start, (uint64_t)us_end);
++		polaris_note("UP", (uint64_t)us_prot, (uint64_t)(uintptr_t)map->pmap,
++		    (uint64_t)(uintptr_t)map);
++	}
++#endif
++
+ 	return KERN_SUCCESS;
+ }
+ 
+diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
+index 62842d5..d577c7c 100644
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -1438,6 +1438,38 @@ handle_user_abort(arm_saved_state_t *state, uint32_t esr, vm_offset_t fault_addr
+ 			    /* change_wiring */ FALSE, VM_KERN_MEMORY_NONE, THREAD_ABORTSAFE,
+ 			    /* caller_pmap */ NULL, /* caller_pmap_addr */ 0);
+ 		}
++
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++		{
++			/*
++			 * POLARIS: the verdict of the VM for every user fault, not
++			 * only the ones that fail.  KERN_SUCCESS here plus the same
++			 * address faulting again means the translation never reached
++			 * the pmap the CPU is walking; KERN_INVALID_ADDRESS means the
++			 * map has no entry for the address at all (a missing stack
++			 * region looks exactly like that).
++			 */
++			static int polaris_uv_n;
++
++			if (polaris_uv_n < 10) {
++				polaris_uv_n++;
++				polaris_note("UV", (uint64_t)result, (uint64_t)vm_fault_addr,
++				    (uint64_t)fault_type);
++			}
++			/*
++			 * UY answers the remaining question: is the page table the
++			 * CPU is walking the one this map owns?  ttep is the table
++			 * the pmap would install; the second value is the one in
++			 * TTBR0 right now.
++			 */
++			if (polaris_uv_n <= 3) {
++				polaris_note("UY", (uint64_t)map->pmap->ttep,
++				    (uint64_t)get_mmu_ttb(),
++				    (uint64_t)(uintptr_t)map->pmap);
++			}
++		}
++#endif
++
+ 		if (result == KERN_SUCCESS || result == KERN_ABORTED) {
+ 			return;
+ 		}
