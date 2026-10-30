@@ -51,3 +51,4 @@
 0051-polaris-user-fault-probes.patch
 0052-polaris-user-abort-detail.patch
 0053-polaris-exec-stack-probes.patch
+0054-polaris-fault-page-table-probes.patch

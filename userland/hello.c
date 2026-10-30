@@ -71,6 +71,29 @@ void polaris_start(void)
 	say_val(fd, "POLARIS HELLO write -> ", w);
 
 	/*
+	 * Every print so far came out of .text and .bss, so none of them
+	 * proves that this process can touch the stack that execve() built
+	 * for it.  Do it explicitly, with a marker on each side of the
+	 * first store: whichever line is the last one on the panel names
+	 * the instruction that kills the process.
+	 */
+	{
+		volatile unsigned char stack_probe[512];
+		unsigned long sp;
+
+		__asm__ volatile("mov %0, sp" : "=r"(sp));
+		say_val(fd, "POLARIS HELLO sp = ", (long)sp);
+		say_val(fd, "POLARIS HELLO frame = ",
+		    (long)(unsigned long)stack_probe);
+		stack_probe[0] = 0x33;
+		say(fd, "POLARIS HELLO: stack byte 0 written\n");
+		stack_probe[511] = 0x44;
+		say(fd, "POLARIS HELLO: stack byte 511 written\n");
+		say_val(fd, "POLARIS HELLO probe = ",
+		    (long)(stack_probe[0] + stack_probe[511]));
+	}
+
+	/*
 	 * Leave on purpose, but not instantly: give the console time to put
 	 * these lines on the panel, then hand control back to init.
 	 */

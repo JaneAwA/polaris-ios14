@@ -1,0 +1,84 @@
+diff --git a/osfmk/arm64/polaris_shims.c b/osfmk/arm64/polaris_shims.c
+index 3f4d21e..af83cf3 100644
+--- a/osfmk/arm64/polaris_shims.c
++++ b/osfmk/arm64/polaris_shims.c
+@@ -96,6 +96,16 @@ polaris_map_probe(vm_map_t map, uint64_t addr)
+ 	polaris_note("US", addr, start, end);
+ 	polaris_note("UP", prot, (uint64_t)(uintptr_t)map->pmap,
+ 	    (uint64_t)(uintptr_t)map);
++	/*
++	 * POLARIS: the range the pmap believes it covers.  pmap_vtophys() and
++	 * friends refuse every address outside [min, max), and pmap_enter()
++	 * quietly does nothing useful there, so an address that is inside the
++	 * map but outside the pmap looks exactly like a fault that the VM
++	 * keeps "succeeding" at.  ttep is the table the pmap owns; UY later
++	 * prints it again next to the one in TTBR0.
++	 */
++	polaris_note("UZ", (uint64_t)map->pmap->min, (uint64_t)map->pmap->max,
++	    (uint64_t)map->pmap->ttep);
+ }
+ 
+ struct proc;
+diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
+index d577c7c..2f6cf3f 100644
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -1442,19 +1442,38 @@ handle_user_abort(arm_saved_state_t *state, uint32_t esr, vm_offset_t fault_addr
+ #if defined(ARM64_BOARD_CONFIG_POLARIS)
+ 		{
+ 			/*
+-			 * POLARIS: the verdict of the VM for every user fault, not
+-			 * only the ones that fail.  KERN_SUCCESS here plus the same
+-			 * address faulting again means the translation never reached
+-			 * the pmap the CPU is walking; KERN_INVALID_ADDRESS means the
+-			 * map has no entry for the address at all (a missing stack
+-			 * region looks exactly like that).
++			 * POLARIS: the VM's verdict next to what the page tables
++			 * actually hold, because "vm_fault() said KERN_SUCCESS and
++			 * the same instruction faulted again" has three very
++			 * different explanations.
++			 *
++			 *   second value  pmap_find_phys_nofault() -- walks the
++			 *                 table TTBR0 points at right now.  Only
++			 *                 asked when TTBR0 really is this pmap's
++			 *                 table (UY prints both addresses), since
++			 *                 the walk would otherwise be meaningless.
++			 *   third value   pmap_find_phys() -- the pmap's own table.
++			 *
++			 * both zero            nothing was entered anywhere;
++			 * live zero, own not   the CPU walks a table nobody filled;
++			 * both non-zero        the translation exists, so the fault
++			 *                      is about permission bits or the TLB.
+ 			 */
+-			static int polaris_uv_n;
++			static int polaris_uf_n;
+ 
+-			if (polaris_uv_n < 10) {
+-				polaris_uv_n++;
+-				polaris_note("UV", (uint64_t)result, (uint64_t)vm_fault_addr,
+-				    (uint64_t)fault_type);
++			if (polaris_uf_n < 6) {
++				uint64_t        ttb = (uint64_t)get_mmu_ttb();
++				uint64_t        live = 0;
++
++				polaris_uf_n++;
++				if (ttb == (uint64_t)map->pmap->ttep) {
++					live = (uint64_t)pmap_find_phys_nofault(map->pmap,
++					    vm_fault_addr);
++				}
++				polaris_note("UF", (uint64_t)esr,
++				    (uint64_t)vm_fault_addr, (uint64_t)fault_type);
++				polaris_note("UG", (uint64_t)result, live,
++				    (uint64_t)pmap_find_phys(map->pmap, vm_fault_addr));
+ 			}
+ 			/*
+ 			 * UY answers the remaining question: is the page table the
+@@ -1462,7 +1481,7 @@ handle_user_abort(arm_saved_state_t *state, uint32_t esr, vm_offset_t fault_addr
+ 			 * the pmap would install; the second value is the one in
+ 			 * TTBR0 right now.
+ 			 */
+-			if (polaris_uv_n <= 3) {
++			if (polaris_uf_n == 1) {
+ 				polaris_note("UY", (uint64_t)map->pmap->ttep,
+ 				    (uint64_t)get_mmu_ttb(),
+ 				    (uint64_t)(uintptr_t)map->pmap);

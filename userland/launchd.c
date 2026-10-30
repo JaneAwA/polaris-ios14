@@ -136,9 +136,28 @@ void polaris_start(void)
 	pid = p_fork();
 	say_val(fd, "POLARIS LAUNCHD: fork -> ", pid);
 	if (pid == 0) {
+		/*
+		 * say_num() prints out of .bss, so a child that manages to
+		 * print its pid has said nothing at all about the stack it
+		 * inherited.  This frame is the first thing in the whole
+		 * program that forces a stack page in: one marker before the
+		 * first byte, one between the two writes, one after.
+		 */
+		volatile unsigned char stack_probe[512];
+		unsigned long sp;
+
+		__asm__ volatile("mov %0, sp" : "=r"(sp));
 		say(fd, child_alive);
 		say_num(fd, p_getpid());
 		say(fd, "\n");
+		say_val(fd, "POLARIS CHILD: sp = ", (long)sp);
+		say_val(fd, "POLARIS CHILD: frame = ", (long)(unsigned long)stack_probe);
+		stack_probe[0] = 0x11;
+		say(fd, "POLARIS CHILD: stack byte 0 written\n");
+		stack_probe[511] = 0x22;
+		say(fd, "POLARIS CHILD: stack byte 511 written\n");
+		say_val(fd, "POLARIS CHILD: probe = ",
+		    (long)(stack_probe[0] + stack_probe[511]));
 		p_sleep_ms(150);
 		p_exit(0);
 	}
