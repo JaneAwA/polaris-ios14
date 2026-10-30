@@ -46,10 +46,10 @@ void polaris_start(void)
 	if (fd < 0) {
 		fd = 1;
 	}
-	say(fd, hello);
 	say(fd, "POLARIS HELLO pid ");
 	say_num(fd, p_getpid());
 	say(fd, "\n");
+	say(fd, hello);
 
 	/*
 	 * Stay alive without spinning: wait4() on an empty child list returns

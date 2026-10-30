@@ -1,0 +1,69 @@
+diff --git a/bsd/miscfs/mockfs/mockfs_vnops.c b/bsd/miscfs/mockfs/mockfs_vnops.c
+index 53334db..8931490 100644
+--- a/bsd/miscfs/mockfs/mockfs_vnops.c
++++ b/bsd/miscfs/mockfs/mockfs_vnops.c
+@@ -459,11 +459,25 @@ int
+ mockfs_pagein(struct vnop_pagein_args * ap)
+ {
+ 	mockfs_fsnode_t fsnode;
++	int result;
+ 
+ 	fsnode = (mockfs_fsnode_t) vnode_fsnode(ap->a_vp);
+ 
+-	return cluster_pagein(ap->a_vp, ap->a_pl, ap->a_pl_offset,
++	result = cluster_pagein(ap->a_vp, ap->a_pl, ap->a_pl_offset,
+ 	    ap->a_f_offset, ap->a_size, fsnode->size, ap->a_flags);
++
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	/*
++	 * POLARIS: a fault on an executable page ends up here.  A fault address
++	 * on the panel with no PG line for the same page means the mapping
++	 * never reached the pager; a PG line with a non-zero result means the
++	 * pager itself refused the page.
++	 */
++	polaris_note("PG", (uint64_t)ap->a_f_offset, (uint64_t)ap->a_size,
++	    (uint64_t)(int64_t)result);
++#endif
++
++	return result;
+ }
+ 
+ /*
+diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
+index 6b1abf4..83c31e4 100644
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -76,6 +76,12 @@
+ extern void polaris_kabort_trace(uint64_t far, uint64_t esr, uint64_t pc,
+     uint64_t lr, uint64_t sp, uint64_t fp, uint64_t cpsr, uint64_t thread,
+     uint64_t task, uint64_t kstack, uint64_t ktask);
++/*
++ * POLARIS: pexpert/arm/pe_serial.c.  One labelled line of three numbers, so a
++ * probe can say what happened without a printf() format string in the middle
++ * of the fault path.
++ */
++extern void polaris_note(const char *tag, uint64_t a, uint64_t b, uint64_t c);
+ #endif
+ 
+ #ifndef __arm64__
+@@ -1382,6 +1388,20 @@ handle_user_abort(arm_saved_state_t *state, uint32_t esr, vm_offset_t fault_addr
+ 			return;
+ 		}
+ 
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++		/*
++		 * POLARIS: the VM could not satisfy a fault from user space, so
++		 * this process is about to be killed -- SIGSEGV when the reason
++		 * is KERN_PROTECTION_FAILURE, SIGBUS for everything else.  Log
++		 * the address, the reason and the faulting thread, because the
++		 * panic that follows ("initproc exited", namespace 2) only says
++		 * that the process died, not where.
++		 */
++		polaris_note("XA", (uint64_t)result, (uint64_t)vm_fault_addr,
++		    (uint64_t)esr);
++		polaris_note("XB", (uint64_t)thread, (uint64_t)fault_type, 0);
++#endif
++
+ 		/*
+ 		 * vm_fault() should never return KERN_FAILURE for page faults from user space.
+ 		 * If it does, we're leaking preemption disables somewhere in the kernel.

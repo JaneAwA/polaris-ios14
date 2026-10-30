@@ -81,9 +81,32 @@ static inline int p_close(int fd)
 	return (int)psys_ret(PSYS_close, fd, 0, 0);
 }
 
+/*
+ * fork() does not return 0 in the child on this kernel.
+ *
+ * thread_set_child() in osfmk/arm64/status.c hands the child the pid in x0 and
+ * the constant 1 in x1; libsyscall is what turns that into the 0 that user
+ * code expects.  Reading only x0 makes both processes believe they are the
+ * parent, which is exactly what the panel showed ("fork -> 0x2 pid 0x2", then
+ * the same wait/exec sequence twice).
+ */
 static inline long p_fork(void)
 {
-	return psys_ret(PSYS_fork, 0, 0, 0);
+	register long x0 __asm__("x0") = 0;
+	register long x1 __asm__("x1") = 0;
+	register long x16 __asm__("x16") = PSYS_fork;
+	int e = 0;
+
+	__asm__ volatile("svc #0x80\n\t"
+	    "cset %w2, cs"
+	    : "+r"(x0), "+r"(x1), "=&r"(e)
+	    : "r"(x16)
+	    : "cc", "memory");
+
+	if (e != 0) {
+		return -x0;
+	}
+	return (x1 != 0) ? 0 : x0;
 }
 
 static inline long p_execve(const char *path, char *const argv[], char *const envp[])

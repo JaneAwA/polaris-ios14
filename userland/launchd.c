@@ -77,6 +77,7 @@ void polaris_start(void)
 	long r;
 	int waits = 0;
 	int tried_direct = 0;
+	int had_child = 0;
 
 	fd = p_open(CONSOLE, PO_WRONLY, 0);
 	if (fd < 0) {
@@ -116,6 +117,7 @@ void polaris_start(void)
 	if (pid < 0) {
 		say(fd, "POLARIS LAUNCHD: fork failed\n");
 	} else {
+		had_child = 1;
 		say(fd, forked);
 	}
 
@@ -130,16 +132,17 @@ void polaris_start(void)
 
 		/*
 		 * ECHILD here means there is no child to wait for at all, which
-		 * is what a fork that hands the child the parent's return value
-		 * looks like from the outside: the "child" is the parent.  Do
-		 * not sit in that loop forever -- exec the payload directly so
-		 * one boot still tells us whether a second exec works.
+		 * is what a fork that never produced one looks like from the
+		 * outside.  Do not sit in that loop forever -- exec the payload
+		 * directly so one boot still tells us whether a second exec
+		 * works.  Once a child has existed, ECHILD is the ordinary end
+		 * state of a reaper, so leave init in place instead.
 		 */
 		if (waits < 3) {
 			waits++;
 			say_val(fd, "POLARIS LAUNCHD: wait -> ", r);
 		}
-		if (waits >= 3 && !tried_direct) {
+		if (!had_child && waits >= 3 && !tried_direct) {
 			tried_direct = 1;
 			say(fd, direct);
 			r = p_execve("/sbin/hello", argv, envp);
