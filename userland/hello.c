@@ -1,9 +1,11 @@
 /*
- * The program our init execs, so that a second exec (new task, new address
- * space, new image) is visible on the screen.
+ * The program our init starts, so that a second process (new task, new
+ * address space, new image) is visible on the screen.
  *
- * It must never exit on its own: when the parent execs this image the
- * process is still pid 1, and the kernel panics if pid 1 goes away.
+ * It prints, waits long enough for the writes to reach the console, and then
+ * exits on purpose: after a vfork() the parent is blocked until this process
+ * execs or exits, and after a fork() it is waiting in wait4(), so init only
+ * gets to run its next experiment once this one is gone.
  */
 #include "polaris.h"
 
@@ -67,11 +69,9 @@ void polaris_start(void)
 	say_val(fd, "POLARIS HELLO write -> ", w);
 
 	/*
-	 * Stay alive without spinning: wait4() on an empty child list returns
-	 * immediately, so sleeping is what keeps the CPU free (cpus=1) for
-	 * the console to drain.
+	 * Leave on purpose, but not instantly: give the console time to put
+	 * these lines on the panel, then hand control back to init.
 	 */
-	for (;;) {
-		p_sleep_ms(500);
-	}
+	p_sleep_ms(400);
+	p_exit(0);
 }

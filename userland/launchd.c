@@ -5,10 +5,23 @@
  * sandbox and a pile of entitlements -- none of which exist on this board.
  * So the first process here is written from scratch: it talks to the kernel
  * through raw system calls, prints on /dev/console (the only console we
- * have), forks a child to prove that exec works, and then reaps children
- * for as long as it lives.
+ * have), starts children to prove that a second process works, and then
+ * reaps them for as long as it lives.
  *
- * It must never exit: the kernel panics when pid 1 goes away.
+ * Two experiments, in this order:
+ *
+ *   1. vfork().  The child borrows this task and this address space, so
+ *      nothing has to be copied and no second pmap has to be built before
+ *      execve() gives the child a task of its own.
+ *   2. fork().  A real child with a copied address space, which is the path
+ *      that has been failing: the child disappears before it prints its
+ *      return value.
+ *
+ * Running both in one boot says whether the problem is "a second process"
+ * or specifically "a copied address space".  The payload exits on its own
+ * after a moment so that the parent gets control back and the second
+ * experiment can run; init itself must never exit, because the kernel
+ * panics when pid 1 goes away.
  */
 #include "polaris.h"
 
@@ -63,20 +76,16 @@ static void say_val(int fd, const char *label, long v)
 void polaris_start(void)
 {
 	static const char alive[] = "POLARIS LAUNCHD ALIVE\n";
-	static const char forking[] = "POLARIS LAUNCHD: forking /sbin/hello\n";
-	static const char forked[] = "POLARIS LAUNCHD: child forked\n";
+	static const char vforking[] = "POLARIS LAUNCHD: vfork /sbin/hello\n";
+	static const char forking[] = "POLARIS LAUNCHD: fork /sbin/hello\n";
 	static const char failed[] = "POLARIS LAUNCHD: execve failed\n";
 	static const char running[] = "POLARIS LAUNCHD: child running\n";
-	static const char direct[] = "POLARIS LAUNCHD: no waitable child, exec direct\n";
 	char *argv[2];
 	char *envp[2];
 	int fd;
 	long pid;
-	long me;
 	long r;
-	int waits = 0;
-	int tried_direct = 0;
-	int had_child = 0;
+	int status;
 
 	fd = p_open(CONSOLE, PO_WRONLY, 0);
 	if (fd < 0) {
@@ -92,72 +101,49 @@ void polaris_start(void)
 	envp[0] = (char *)"PATH=/sbin:/usr/bin";
 	envp[1] = 0;
 
-	me = p_getpid();
 	say(fd, alive);
-	say_val(fd, "POLARIS LAUNCHD: my pid = ", me);
-	say(fd, forking);
+	say_val(fd, "POLARIS LAUNCHD: my pid = ", p_getpid());
 
-	pid = p_fork();
-	say(fd, "POLARIS LAUNCHD: fork -> ");
-	say_num(fd, pid);
-	say(fd, " pid ");
-	say_num(fd, p_getpid());
-	say(fd, "\n");
-
+	/* Experiment 1: a child that borrows this task until it execves. */
+	say(fd, vforking);
+	pid = p_vfork();
+	say_val(fd, "POLARIS LAUNCHD: vfork -> ", pid);
 	if (pid == 0) {
-		/* Reaching this line proves fork returned to user space. */
+		/* Reaching this line proves vfork returned to user space. */
 		say(fd, running);
 		r = p_execve("/sbin/hello", argv, envp);
-		say_val(fd, "POLARIS LAUNCHD: execve -> ", r);
+		say_val(fd, "POLARIS LAUNCHD: vfork execve -> ", r);
 		say(fd, failed);
 		p_exit(1);
 	}
 
-	if (pid < 0) {
-		say(fd, "POLARIS LAUNCHD: fork failed\n");
-	} else {
-		had_child = 1;
-		say(fd, forked);
+	/* Experiment 2: a real child, i.e. a copied address space. */
+	say(fd, forking);
+	pid = p_fork();
+	say_val(fd, "POLARIS LAUNCHD: fork -> ", pid);
+	if (pid == 0) {
+		say(fd, running);
+		r = p_execve("/sbin/hello", argv, envp);
+		say_val(fd, "POLARIS LAUNCHD: fork execve -> ", r);
+		say(fd, failed);
+		p_exit(1);
 	}
 
+	/*
+	 * Reaper.  The raw status is the only witness to why a child went
+	 * away: low byte is the signal when WIFSIGNALED, otherwise
+	 * (code << 8).  Sleep on ECHILD instead of spinning -- cpus=1, and a
+	 * busy init starves the console.
+	 */
 	for (;;) {
-		int status = 0;
-
+		status = 0;
 		r = p_wait4(-1, &status, 0);
 		if (r > 0) {
-			/*
-			 * The raw status is the only witness to why the child went
-			 * away: low byte is the signal when WIFSIGNALED, otherwise
-			 * (code << 8).  Print both the pid and the number.
-			 */
 			say_val(fd, "POLARIS LAUNCHD: reaped pid ", r);
 			say_val(fd, "POLARIS LAUNCHD: reaped status ", status);
-			had_child = 1;
-			continue;
-		}
-
-		/*
-		 * ECHILD here means there is no child to wait for at all, which
-		 * is what a fork that never produced one looks like from the
-		 * outside.  Do not sit in that loop forever -- exec the payload
-		 * directly so one boot still tells us whether a second exec
-		 * works.  Once a child has existed, ECHILD is the ordinary end
-		 * state of a reaper, so leave init in place instead.
-		 */
-		if (waits < 3) {
-			waits++;
+		} else {
 			say_val(fd, "POLARIS LAUNCHD: wait -> ", r);
+			p_sleep_ms(300);
 		}
-		if (!had_child && waits >= 3 && !tried_direct) {
-			tried_direct = 1;
-			say(fd, direct);
-			r = p_execve("/sbin/hello", argv, envp);
-			say_val(fd, "POLARIS LAUNCHD: direct execve -> ", r);
-		}
-		/*
-		 * Block, do not spin: cpus=1, and a process that loops on a
-		 * syscall that returns immediately starves the console.
-		 */
-		p_sleep_ms(200);
 	}
 }

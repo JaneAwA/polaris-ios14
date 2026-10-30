@@ -27,6 +27,7 @@ __attribute__((weak)) void dyld_stub_binder(void) { }
 #define PSYS_wait4     7
 #define PSYS_getpid   20
 #define PSYS_execve   59
+#define PSYS_vfork    66
 #define PSYS_poll    230
 
 #define PO_RDONLY   0x0000
@@ -113,6 +114,35 @@ static inline long p_fork(void)
 static inline long p_execve(const char *path, char *const argv[], char *const envp[])
 {
 	return psys_ret(PSYS_execve, (long)path, (long)argv, (long)envp);
+}
+
+/*
+ * vfork() shares the parent's task instead of copying its address space.
+ *
+ * The child is a process, not a task: it borrows this thread and this map,
+ * runs until it execve()s (which is the point where the kernel finally builds
+ * it a task of its own) or exits, and the parent does not run again until then.
+ * Same return convention as fork() -- thread_set_child() hands the child the
+ * pid in x0 and 1 in x1, and thread_set_parent() hands the parent pid in x0
+ * and 0 in x1 -- so the same "x1 means child" test applies.
+ */
+static inline long p_vfork(void)
+{
+	register long x0 __asm__("x0") = 0;
+	register long x1 __asm__("x1") = 0;
+	register long x16 __asm__("x16") = PSYS_vfork;
+	int e = 0;
+
+	__asm__ volatile("svc #0x80\n\t"
+	    "cset %w2, cs"
+	    : "+r"(x0), "+r"(x1), "=&r"(e)
+	    : "r"(x16)
+	    : "cc", "memory");
+
+	if (e != 0) {
+		return -x0;
+	}
+	return (x1 != 0) ? 0 : x0;
 }
 
 static inline long p_wait4(int pid, int *status, int options)

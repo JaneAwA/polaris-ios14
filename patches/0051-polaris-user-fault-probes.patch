@@ -1,0 +1,43 @@
+diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
+index 83c31e4..d851446 100644
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -1339,6 +1339,38 @@ handle_user_abort(arm_saved_state_t *state, uint32_t esr, vm_offset_t fault_addr
+ 			vm_fault_addr = tbi_clear(fault_addr);
+ 		}
+ 
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++		{
++			/*
++			 * POLARIS: one short line for every user fault, before
++			 * the VM is asked for the page, plus one line the first
++			 * time a thread faults.  The same fault address coming
++			 * back while vm_fault() keeps reporting success means the
++			 * translation never reached the pmap; a fault followed by
++			 * no output at all means the machine died inside
++			 * vm_fault().  The UM line answers the other question:
++			 * is the thread on the map its own task owns?
++			 */
++			static thread_t polaris_ua_thread;
++			static int polaris_ua_faults;
++
++			if (thread != polaris_ua_thread) {
++				polaris_ua_thread = thread;
++				polaris_note("UM",
++				    (uint64_t)(uintptr_t)thread->map,
++				    (uint64_t)(uintptr_t)thread->task->map,
++				    (uint64_t)(uintptr_t)thread);
++			}
++			if (polaris_ua_faults < 10) {
++				polaris_ua_faults++;
++				polaris_note("UA",
++				    (uint64_t)get_saved_state_pc(state),
++				    (uint64_t)vm_fault_addr,
++				    (uint64_t)get_saved_state_sp(state));
++			}
++		}
++#endif /* ARM64_BOARD_CONFIG_POLARIS */
++
+ #if CONFIG_DTRACE
+ 		if (thread->t_dtrace_inprobe) { /* Executing under dtrace_probe? */
+ 			if (dtrace_tally_fault(vm_fault_addr)) { /* Should a user mode fault under dtrace be ignored? */
