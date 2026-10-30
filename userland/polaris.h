@@ -145,9 +145,35 @@ static inline long p_vfork(void)
 	return (x1 != 0) ? 0 : x0;
 }
 
+/*
+ * wait4() takes four arguments, and the fourth one is not optional-safe.
+ *
+ * The kernel does "if (uap->rusage) { ... copyout(..., uap->rusage, ...) }"
+ * after it has already copied the status out.  Only three registers are set
+ * here before svc, so x3 still holds whatever the last call left behind; a
+ * non-zero leftover makes that copyout() fail with EFAULT, and the error path
+ * leaves the child a zombie, so every later call fails the same way and the
+ * parent prints "wait -> -0xe" forever.  Pass the null pointer explicitly.
+ */
 static inline long p_wait4(int pid, int *status, int options)
 {
-	return psys_ret(PSYS_wait4, pid, (long)status, options);
+	register long x0 __asm__("x0") = pid;
+	register long x1 __asm__("x1") = (long)status;
+	register long x2 __asm__("x2") = options;
+	register long x3 __asm__("x3") = 0;
+	register long x16 __asm__("x16") = PSYS_wait4;
+	int e = 0;
+
+	__asm__ volatile("svc #0x80\n\t"
+	    "cset %w4, cs"
+	    : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3), "=&r"(e)
+	    : "r"(x16)
+	    : "cc", "memory");
+
+	if (e != 0) {
+		return -x0;
+	}
+	return x0;
 }
 
 /*

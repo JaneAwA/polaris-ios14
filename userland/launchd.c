@@ -134,15 +134,25 @@ void polaris_start(void)
 	 * away: low byte is the signal when WIFSIGNALED, otherwise
 	 * (code << 8).  Sleep on ECHILD instead of spinning -- cpus=1, and a
 	 * busy init starves the console.
+	 *
+	 * Only the first few failures are printed: this loop runs for the
+	 * lifetime of the machine, and a line every 300 ms scrolls everything
+	 * else off the panel (an earlier build sat there printing
+	 * "wait -> -0xe" forever, which is all the screen showed).
 	 */
-	for (;;) {
-		status = 0;
-		r = p_wait4(-1, &status, 0);
-		if (r > 0) {
-			say_val(fd, "POLARIS LAUNCHD: reaped pid ", r);
-			say_val(fd, "POLARIS LAUNCHD: reaped status ", status);
-		} else {
-			say_val(fd, "POLARIS LAUNCHD: wait -> ", r);
+	{
+		int noisy = 3;
+
+		for (;;) {
+			status = 0;
+			r = p_wait4(-1, &status, 0);
+			if (r > 0) {
+				say_val(fd, "POLARIS LAUNCHD: reaped pid ", r);
+				say_val(fd, "POLARIS LAUNCHD: reaped status ", status);
+			} else if (noisy > 0) {
+				noisy--;
+				say_val(fd, "POLARIS LAUNCHD: wait -> ", r);
+			}
 			p_sleep_ms(300);
 		}
 	}

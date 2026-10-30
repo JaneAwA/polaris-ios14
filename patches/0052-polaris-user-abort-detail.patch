@@ -1,0 +1,60 @@
+diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
+index d851446..62842d5 100644
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -1326,6 +1326,28 @@ handle_user_abort(arm_saved_state_t *state, uint32_t esr, vm_offset_t fault_addr
+ 		panic_with_thread_kernel_state("Apparently on interrupt stack when taking user abort!\n", state);
+ 	}
+ 
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	{
++		/*
++		 * POLARIS: every abort that reaches user space, whatever its kind,
++		 * with the raw ESR.  The earlier probe (0019) stops after six
++		 * aborts and the kernel takes a dozen of its own during boot, so
++		 * the one abort that actually kills the process was never on the
++		 * panel.  ESR bits 31:26 are the exception class: 0x24/0x25 are
++		 * data aborts from EL0/EL1, 0x22/0x26 are PC alignment and
++		 * 0x2f/0x2e are the "external abort" (bus error) classes that end
++		 * up as SIGBUS without ever asking the VM for a page.
++		 */
++		static int polaris_ue_n;
++
++		if (polaris_ue_n < 12) {
++			polaris_ue_n++;
++			polaris_note("UE", (uint64_t)esr, (uint64_t)fault_addr,
++			    (uint64_t)get_saved_state_pc(state));
++		}
++	}
++#endif /* ARM64_BOARD_CONFIG_POLARIS */
++
+ 	thread->iotier_override = THROTTLE_LEVEL_NONE; /* Reset IO tier override before handling abort from userspace */
+ 
+ 	if (is_vm_fault(fault_code)) {
+@@ -1508,6 +1530,26 @@ handle_user_abort(arm_saved_state_t *state, uint32_t esr, vm_offset_t fault_addr
+ 		exc |= EXC_PTRAUTH_BIT;
+ 	}
+ #endif /* __has_feature(ptrauth_calls) */
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	{
++		/*
++		 * POLARIS: the exception is about to be delivered, i.e. this is
++		 * the abort that kills the process.  Packed as
++		 * (exc << 32) | codes[0], then the faulting address and the raw
++		 * ESR: codes[0] is the reason (KERN_PROTECTION_FAILURE becomes
++		 * SIGSEGV, everything else SIGBUS) and only the ESR says which
++		 * kind of abort got here.
++		 */
++		static int polaris_ut_n;
++
++		if (polaris_ut_n < 8) {
++			polaris_ut_n++;
++			polaris_note("UT",
++			    ((uint64_t)exc << 32) | (uint32_t)codes[0],
++			    (uint64_t)codes[1], (uint64_t)esr);
++		}
++	}
++#endif /* ARM64_BOARD_CONFIG_POLARIS */
+ 	exception_triage(exc, codes, numcodes);
+ 	__builtin_unreachable();
+ }

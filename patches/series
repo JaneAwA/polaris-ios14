@@ -49,3 +49,4 @@
 0049-polaris-fault-probes.patch
 0050-polaris-exit-probe.patch
 0051-polaris-user-fault-probes.patch
+0052-polaris-user-abort-detail.patch
