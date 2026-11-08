@@ -7,6 +7,9 @@ name: xnu-7195
 on:
   workflow_dispatch:
     inputs:
+      runner:
+        description: "GitHub-hosted runner label (macos-14 was retired upstream)"
+        default: "macos-15"
       xnu_tag:
         description: "xnu tag (xnu-7195.141.2 = iOS 14.8)"
         default: "xnu-7195.141.2"
@@ -37,7 +40,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: ${{ inputs.runner || 'macos-15' }}
     timeout-minutes: 100
     env:
       XNU_TAG: ${{ inputs.xnu_tag || 'xnu-7195.141.2' }}
