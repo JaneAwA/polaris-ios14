@@ -1,0 +1,49 @@
+diff --git a/bsd/kern/sys_generic.c b/bsd/kern/sys_generic.c
+index 71c25dc..59fb9e4 100644
+--- a/bsd/kern/sys_generic.c
++++ b/bsd/kern/sys_generic.c
+@@ -507,6 +507,44 @@ write_nocancel(struct proc *p, struct write_nocancel_args *uap, user_ssize_t *re
+ 	int error;
+ 	int fd = uap->fd;
+ 
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	{
++		/*
++		 * POLARIS: echo the bytes a non-init process tried to print
++		 * straight onto the framebuffer, before fp_lookup can refuse the
++		 * descriptor.  A child whose writes were rejected and a child
++		 * that never reached user space look identical on this panel;
++		 * this line is the witness that write() actually happened.
++		 * polaris_note() draws its tag verbatim, so the payload arrives
++		 * as readable text rather than three numbers.
++		 */
++		static int polaris_wx_n;
++		static char polaris_wx_buf[25];
++		size_t wx_n = (size_t)uap->nbyte;
++
++		if (p->p_pid != 1 && polaris_wx_n < 32 &&
++		    fd >= 0 && fd <= 5 && wx_n != 0) {
++			if (wx_n > sizeof(polaris_wx_buf) - 1) {
++				wx_n = sizeof(polaris_wx_buf) - 1;
++			}
++			if (copyin(uap->cbuf, polaris_wx_buf, wx_n) == 0) {
++				size_t wx_i;
++
++				for (wx_i = 0; wx_i < wx_n; wx_i++) {
++					if (polaris_wx_buf[wx_i] == '\n' ||
++					    polaris_wx_buf[wx_i] == '\r') {
++						polaris_wx_buf[wx_i] = ' ';
++					}
++				}
++				polaris_wx_buf[wx_n] = '\0';
++				polaris_wx_n++;
++				polaris_note(polaris_wx_buf, (uint64_t)fd,
++				    (uint64_t)uap->nbyte, (uint64_t)p->p_pid);
++			}
++		}
++	}
++#endif /* ARM64_BOARD_CONFIG_POLARIS */
++
+ 	AUDIT_ARG(fd, fd);
+ 
+ 	error = fp_lookup(p, fd, &fp, 0);

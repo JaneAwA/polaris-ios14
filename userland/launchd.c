@@ -195,6 +195,8 @@ void polaris_start(void)
 	 */
 	{
 		int noisy = 3;
+		int idle = 0;
+		int idle_reports = 0;
 
 		for (;;) {
 			status = 0;
@@ -205,6 +207,13 @@ void polaris_start(void)
 			} else if (noisy > 0) {
 				noisy--;
 				say_val(fd, "POLARIS LAUNCHD: wait -> ", r);
+			} else if (++idle >= 20 && idle_reports < 5) {
+				/* ECHILD forever is the expected end state; say so
+				 * a few times so a silent panel is not mistaken
+				 * for a hung machine. */
+				idle = 0;
+				idle_reports++;
+				say_val(fd, "POLARIS LAUNCHD: idle ", idle_reports);
 			}
 			p_sleep_ms(300);
 		}

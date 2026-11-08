@@ -53,3 +53,4 @@
 0053-polaris-exec-stack-probes.patch
 0054-polaris-fault-page-table-probes.patch
 0055-polaris-write-probe.patch
+0056-polaris-write-echo.patch

@@ -56,6 +56,13 @@ void polaris_start(void)
 	int fd;
 	int probe;
 
+	/*
+	 * First thing this image does after execve().  The 0056 kernel probe
+	 * echoes every write from a non-init process straight onto the panel,
+	 * so this line survives even when not a single descriptor works.
+	 */
+	(void)p_write(1, "POLARIS HELLO ENTER\n", 20);
+
 	fd = p_open("/dev/console", PO_WRONLY, 0);
 	if (fd < 0) {
 		/*
