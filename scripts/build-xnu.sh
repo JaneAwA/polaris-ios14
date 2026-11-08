@@ -62,6 +62,22 @@ cd "$SRC" || die "cd $SRC"
 echo "commit: $(git rev-parse HEAD)"
 echo "files:  $(git ls-files | wc -l)"
 
+# xnu-7195 passes an Apple-internal clang acknowledgement in CFLAGS_GEN.
+# Newer Xcode (macos-15 runners) removed it, so every compile unit fails with
+# "clang: error: unknown argument".  The real option, -ftrivial-auto-var-init=zero,
+# is on the line before it and stays; only the retired acknowledgement goes.
+step "drop retired clang flag"
+python3 - <<'PY'
+p = 'makedefs/MakeInc.def'
+s = open(p).read()
+old = '\t-enable-trivial-auto-var-init-zero-knowing-it-will-be-removed-from-clang \\\n'
+if old in s:
+    open(p, 'w').write(s.replace(old, ''))
+    print('removed retired clang flag')
+else:
+    print('flag not present, leaving MakeInc.def alone')
+PY
+
 if [ "$PATCH_SET" = "series" ]; then
 	step "apply patch series"
 	while IFS= read -r p; do
