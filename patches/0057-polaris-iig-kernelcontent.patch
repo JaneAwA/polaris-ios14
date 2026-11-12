@@ -1,0 +1,42 @@
+diff --git a/iokit/DriverKit/IORPC.h b/iokit/DriverKit/IORPC.h
+index 0ae1415..7c9570b 100644
+--- a/iokit/DriverKit/IORPC.h
++++ b/iokit/DriverKit/IORPC.h
+@@ -214,6 +214,16 @@ struct IORPC {
+ 	IORPCMessageMach * reply;
+ 	uint32_t           sendSize;
+ 	uint32_t           replySize;
++	/*
++	 * POLARIS: the iig shipped with the macOS 15 SDK emits
++	 * ".kernelContent = &buf.msg.content.__hdr" and reads it back as an
++	 * IORPCMessage *.  The open-source header never had that field (it is
++	 * in Apple's closed IORPC), so every DriverKit .iig.cpp fails to
++	 * compile with "no member named 'kernelContent'".  DriverKit is not
++	 * used on this board; the field only has to exist and have the right
++	 * type.
++	 */
++	IORPCMessage *     kernelContent;
+ };
+ typedef struct IORPC IORPC;
+ 
+diff --git a/iokit/IOKit/IORPC.h b/iokit/IOKit/IORPC.h
+index 0ae1415..7c9570b 100644
+--- a/iokit/IOKit/IORPC.h
++++ b/iokit/IOKit/IORPC.h
+@@ -214,6 +214,16 @@ struct IORPC {
+ 	IORPCMessageMach * reply;
+ 	uint32_t           sendSize;
+ 	uint32_t           replySize;
++	/*
++	 * POLARIS: the iig shipped with the macOS 15 SDK emits
++	 * ".kernelContent = &buf.msg.content.__hdr" and reads it back as an
++	 * IORPCMessage *.  The open-source header never had that field (it is
++	 * in Apple's closed IORPC), so every DriverKit .iig.cpp fails to
++	 * compile with "no member named 'kernelContent'".  DriverKit is not
++	 * used on this board; the field only has to exist and have the right
++	 * type.
++	 */
++	IORPCMessage *     kernelContent;
+ };
+ typedef struct IORPC IORPC;
+ 

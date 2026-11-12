@@ -1,0 +1,56 @@
+diff --git a/osfmk/arm/pmap.c b/osfmk/arm/pmap.c
+index 69911ff..195ad6d 100644
+--- a/osfmk/arm/pmap.c
++++ b/osfmk/arm/pmap.c
+@@ -9064,6 +9064,51 @@ pmap_enter_options_addr(
+ 
+ 	PMAP_TRACE(2, PMAP_CODE(PMAP__ENTER) | DBG_FUNC_END, kr);
+ 
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++	{
++		/*
++		 * POLARIS: a user fault that comes straight back after a
++		 * successful pmap_enter() means the CPU is not seeing what the
++		 * pmap wrote.  Two candidates, and these lines separate them:
++		 *
++		 *   PG <ttep&mask> <ttbr0&mask> <hw_asid>
++		 *       the page table the CPU walks vs the one this pmap owns.
++		 *       If the first two differ, TTBR0 points somewhere else.
++		 *
++		 *   PE <vaddr> <pte> <ttbr0>
++		 *       what the PTE actually contains: valid/type in bits 1:0,
++		 *       AF in bit 10, AP[2:1] in bits 7:6.  A PTE that is empty
++		 *       or read-only here explains the fault without any TLB
++		 *       theory; a correct PTE with a matching TTBR0 leaves TLB
++		 *       or ASID staleness as the only explanation.
++		 *
++		 * Only the first 16 MB of the image range, so init's own
++		 * mappings do not drown the panel.
++		 */
++		static int polaris_pe_n;
++		static int polaris_pg_n;
++
++		if (kr == KERN_SUCCESS && pmap != kernel_pmap &&
++		    v >= 0x100000000ULL && v < 0x100100000ULL) {
++			pt_entry_t *ppe = pmap_pte(pmap, v);
++			uint64_t pte = (ppe == PT_ENTRY_NULL) ? 0 : (uint64_t)*ppe;
++			uint64_t ttb = get_mmu_ttb();
++
++			if (polaris_pg_n < 8) {
++				polaris_pg_n++;
++				polaris_note("PG",
++				    (uint64_t)(pmap->ttep & TTBR_BADDR_MASK),
++				    ttb & TTBR_BADDR_MASK,
++				    (uint64_t)pmap->hw_asid);
++			}
++			if (polaris_pe_n < 40) {
++				polaris_pe_n++;
++				polaris_note("PE", (uint64_t)v, pte, ttb);
++			}
++		}
++	}
++#endif /* ARM64_BOARD_CONFIG_POLARIS */
++
+ 	return kr;
+ }
+ 
