@@ -1,0 +1,29 @@
+diff --git a/osfmk/arm/pmap.c b/osfmk/arm/pmap.c
+index 195ad6d..a77ad93 100644
+--- a/osfmk/arm/pmap.c
++++ b/osfmk/arm/pmap.c
+@@ -8335,6 +8335,24 @@ pmap_enter_pte(pmap_t pmap, pt_entry_t *pte_p, pt_entry_t pte, vm_map_address_t
+ 	} else {
+ 		WRITE_PTE(pte_p, pte);
+ 		__builtin_arm_isb(ISB_SY);
++#if defined(ARM64_BOARD_CONFIG_POLARIS)
++		/*
++		 * POLARIS: an empty PTE means "this pmap has never described
++		 * this address", but the TLB can still hold a translation for
++		 * it.  A forked address space inherits translations that the
++		 * new pmap never had an entry for, and reusing an ASID keeps
++		 * them alive across execve().  Skipping the flush here is
++		 * exactly what turns a successful pmap_enter() into a
++		 * permission fault (ESR ...4f) or a translation fault on the
++		 * very next access, with a valid PTE on the panel.
++		 * Flush user mappings unconditionally; the kernel pmap keeps
++		 * the fast path.
++		 */
++		if (pmap != kernel_pmap) {
++			PMAP_UPDATE_TLBS(pmap, v,
++			    v + (pt_attr_page_size(pt_attr) * PAGE_RATIO), false);
++		}
++#endif /* ARM64_BOARD_CONFIG_POLARIS */
+ 	}
+ 
+ 	PMAP_TRACE(4 + pt_attr_leaf_level(pt_attr), PMAP_CODE(PMAP__TTE), VM_KERNEL_ADDRHIDE(pmap),
