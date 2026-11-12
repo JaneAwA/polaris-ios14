@@ -57,3 +57,4 @@
 0057-polaris-iig-kernelcontent.patch
 0058-polaris-pmap-pte-readback.patch
 0059-polaris-flush-user-tlb.patch
+0060-polaris-flush-full-asid.patch

@@ -1,0 +1,31 @@
+diff --git a/osfmk/arm/pmap.c b/osfmk/arm/pmap.c
+index a77ad93..26e0ae9 100644
+--- a/osfmk/arm/pmap.c
++++ b/osfmk/arm/pmap.c
+@@ -8349,8 +8349,24 @@ pmap_enter_pte(pmap_t pmap, pt_entry_t *pte_p, pt_entry_t pte, vm_map_address_t
+ 		 * the fast path.
+ 		 */
+ 		if (pmap != kernel_pmap) {
+-			PMAP_UPDATE_TLBS(pmap, v,
+-			    v + (pt_attr_page_size(pt_attr) * PAGE_RATIO), false);
++			static int polaris_pt_n;
++
++			/*
++			 * 0059 flushed just this page and the fault came
++			 * straight back with a valid PTE, so a single range
++			 * flush is not enough here.  Flush the whole ASID:
++			 * if an inherited translation lives at a different
++			 * VA alias, or the ASID was reused, only this gets
++			 * rid of it.  PT proves on the next screen that this
++			 * branch actually ran.
++			 */
++			flush_mmu_tlb_full_asid_async(pmap);
++			pmap_sync_tlb(true);
++			if (polaris_pt_n < 24) {
++				polaris_pt_n++;
++				polaris_note("PT", (uint64_t)v, (uint64_t)pte,
++				    (uint64_t)pmap->hw_asid);
++			}
+ 		}
+ #endif /* ARM64_BOARD_CONFIG_POLARIS */
+ 	}
