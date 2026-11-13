@@ -66,3 +66,4 @@
 0066-polaris-granule-probe.patch
 0067-polaris-visible-ar-tq.patch
 0068-polaris-boot-tcr-16k.patch
+0069-polaris-force-16k-tcr.patch

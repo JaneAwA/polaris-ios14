@@ -1,0 +1,42 @@
+diff --git a/osfmk/arm/pmap.c b/osfmk/arm/pmap.c
+index b2e23ea..d65cd6c 100644
+--- a/osfmk/arm/pmap.c
++++ b/osfmk/arm/pmap.c
+@@ -8451,7 +8451,7 @@ pmap_enter_pte(pmap_t pmap, pt_entry_t *pte_p, pt_entry_t pte, vm_map_address_t
+ 				 */
+ 				static int polaris_tq_n;
+ 
+-				if (v == 0x100004000ULL && polaris_tq_n < 8) {
++				if (v == 0x100004000ULL && polaris_tq_n < 40) {
+ 					uint64_t tcr;
+ 
+ 					__asm__ volatile("mrs %0, tcr_el1"
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+index a16de33..287dc06 100644
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -2265,6 +2265,24 @@ arm_vm_init(uint64_t memory_size, boot_args * args)
+ 	pmap_bootstrap(dynamic_memory_begin);
+ #if defined(ARM64_BOARD_CONFIG_POLARIS)
+ 	polaris_note("S3", dynamic_memory_begin, 0, 0);
++	{
++		/*
++		 * POLARIS: locore.s expands TCR_EL1_BOOT before board_config.h
++		 * defines __ARM_16K_PG__, so the boot register can still say
++		 * 4 KB while pmap_bootstrap() has just built 16 KB tables.
++		 * Every user mapping then lands one slot away from where the
++		 * MMU walks.  Correct it here, where the granule is explicit,
++		 * and leave a TX line that says whether it fired.
++		 */
++		uint64_t polaris_tcr = get_tcr();
++
++		if ((polaris_tcr & (TCR_TG0_GRANULE_MASK << TCR_TG0_GRANULE_SHIFT)) !=
++		    TCR_TG0_GRANULE_16KB) {
++			set_tcr(TCR_EL1_16KB);
++			flush_mmu_tlb();
++			polaris_note("TX", polaris_tcr, get_tcr(), 0);
++		}
++	}
+ #endif
+ 
+ 	disable_preemption();
