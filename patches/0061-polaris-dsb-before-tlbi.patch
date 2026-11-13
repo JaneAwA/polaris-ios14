@@ -1,0 +1,20 @@
+diff --git a/osfmk/arm/pmap.c b/osfmk/arm/pmap.c
+index 26e0ae9..6c98f8e 100644
+--- a/osfmk/arm/pmap.c
++++ b/osfmk/arm/pmap.c
+@@ -8360,6 +8360,15 @@ pmap_enter_pte(pmap_t pmap, pt_entry_t *pte_p, pt_entry_t pte, vm_map_address_t
+ 			 * rid of it.  PT proves on the next screen that this
+ 			 * branch actually ran.
+ 			 */
++			/*
++			 * Publish the new PTE to the page-table walker before
++			 * invalidating.  WRITE_PTE() only issued a DMB, and a
++			 * TLBI that overtakes the store makes the walker refill
++			 * the TLB from the old (empty) entry: the very next
++			 * access then faults with a translation error while the
++			 * PTE still reads back valid.
++			 */
++			__builtin_arm_dsb(DSB_ISH);
+ 			flush_mmu_tlb_full_asid_async(pmap);
+ 			pmap_sync_tlb(true);
+ 			if (polaris_pt_n < 24) {
