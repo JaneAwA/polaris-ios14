@@ -63,3 +63,4 @@
 0063-polaris-flush-all-tlb.patch
 0064-polaris-hw-translate-probe.patch
 0065-polaris-fix-at-probe.patch
+0066-polaris-granule-probe.patch
