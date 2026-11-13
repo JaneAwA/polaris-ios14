@@ -1,0 +1,34 @@
+diff --git a/osfmk/arm/pmap.c b/osfmk/arm/pmap.c
+index facaa6b..464d1a5 100644
+--- a/osfmk/arm/pmap.c
++++ b/osfmk/arm/pmap.c
+@@ -8390,6 +8390,29 @@ pmap_enter_pte(pmap_t pmap, pt_entry_t *pte_p, pt_entry_t pte, vm_map_address_t
+ 					    (uint64_t)current_pmap(), (uint64_t)v);
+ 				}
+ 			}
++			{
++				/*
++				 * POLARIS: ask the hardware to translate the
++				 * address we just mapped.  PAR_EL1 bit 0 set
++				 * means the walk failed: the page tables the
++				 * CPU walks are not the ones pmap_pte() just
++				 * wrote.  A successful walk with the expected
++				 * PA leaves only the TLB in the picture.
++				 */
++				static int polaris_at_n;
++				uint64_t at_par;
++
++				__asm__ volatile("at s1e0r, %1\n\t"
++				    "isb\n\t"
++				    "mrs %0, par_el1"
++				    : "=r"(at_par) : "r"((uint64_t)v));
++
++				if (polaris_at_n < 24) {
++					polaris_at_n++;
++					polaris_note("AT", at_par, (uint64_t)v,
++					    (uint64_t)pte);
++				}
++			}
+ 			/*
+ 			 * POLARIS: make TTBR0 agree with this pmap's ASID.  The
+ 			 * panel shows "PT ... 4" (pmap->hw_asid) next to

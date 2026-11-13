@@ -61,3 +61,4 @@
 0061-polaris-dsb-before-tlbi.patch
 0062-polaris-sync-ttbr0-asid.patch
 0063-polaris-flush-all-tlb.patch
+0064-polaris-hw-translate-probe.patch
