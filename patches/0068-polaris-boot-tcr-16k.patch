@@ -1,0 +1,22 @@
+diff --git a/osfmk/arm64/locore.s b/osfmk/arm64/locore.s
+index b481fb6..ec6d55a 100644
+--- a/osfmk/arm64/locore.s
++++ b/osfmk/arm64/locore.s
+@@ -29,6 +29,17 @@
+ #include <machine/asm.h>
+ #include <arm64/machine_machdep.h>
+ #include <arm64/machine_routines_asm.h>
++/*
++ * POLARIS: this file includes proc_reg.h before board_config.h, so
++ * __ARM_16K_PG__ is still undefined when proc_reg.h expands
++ * TCR_TG0_GRANULE_SIZE.  The boot TCR_EL1 then says 4 KB pages while the
++ * pmap indexes 16 KB tables, and every user mapping lands one slot away
++ * from where the MMU walks.  Define it before proc_reg.h so TCR_EL1_BOOT
++ * matches the pmap.
++ */
++#if defined(ARM64_BOARD_CONFIG_POLARIS) && !defined(__ARM_16K_PG__)
++#define __ARM_16K_PG__ 1
++#endif
+ #include <arm64/proc_reg.h>
+ #include <pexpert/arm64/board_config.h>
+ #include <mach/exception_types.h>
