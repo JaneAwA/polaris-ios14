@@ -1,0 +1,22 @@
+diff --git a/osfmk/arm/pmap.c b/osfmk/arm/pmap.c
+index 9144f99..b2e23ea 100644
+--- a/osfmk/arm/pmap.c
++++ b/osfmk/arm/pmap.c
+@@ -8427,7 +8427,7 @@ pmap_enter_pte(pmap_t pmap, pt_entry_t *pte_p, pt_entry_t pte, vm_map_address_t
+ 				 */
+ 				static int polaris_ar_n;
+ 
+-				if (polaris_ar_n < 6) {
++				if (v == 0x100004000ULL && polaris_ar_n < 8) {
+ 					pt_entry_t *ar_pte = pmap_pte(pmap, v);
+ 
+ 					polaris_ar_n++;
+@@ -8451,7 +8451,7 @@ pmap_enter_pte(pmap_t pmap, pt_entry_t *pte_p, pt_entry_t pte, vm_map_address_t
+ 				 */
+ 				static int polaris_tq_n;
+ 
+-				if (polaris_tq_n < 6) {
++				if (v == 0x100004000ULL && polaris_tq_n < 8) {
+ 					uint64_t tcr;
+ 
+ 					__asm__ volatile("mrs %0, tcr_el1"
