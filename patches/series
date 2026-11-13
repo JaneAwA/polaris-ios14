@@ -59,3 +59,4 @@
 0059-polaris-flush-user-tlb.patch
 0060-polaris-flush-full-asid.patch
 0061-polaris-dsb-before-tlbi.patch
+0062-polaris-sync-ttbr0-asid.patch

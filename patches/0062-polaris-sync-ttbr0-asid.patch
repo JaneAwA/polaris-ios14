@@ -1,0 +1,38 @@
+diff --git a/osfmk/arm/pmap.c b/osfmk/arm/pmap.c
+index 6c98f8e..f816b18 100644
+--- a/osfmk/arm/pmap.c
++++ b/osfmk/arm/pmap.c
+@@ -8371,6 +8371,33 @@ pmap_enter_pte(pmap_t pmap, pt_entry_t *pte_p, pt_entry_t pte, vm_map_address_t
+ 			__builtin_arm_dsb(DSB_ISH);
+ 			flush_mmu_tlb_full_asid_async(pmap);
+ 			pmap_sync_tlb(true);
++			/*
++			 * POLARIS: make TTBR0 agree with this pmap's ASID.  The
++			 * panel shows "PT ... 4" (pmap->hw_asid) next to
++			 * "PE ... 300010819b000" (TTBR0, ASID 3) inside the
++			 * same enter: the mapping lands in the new pmap while
++			 * the CPU still walks the old ASID.  The flush above
++			 * then invalidates entries nobody is using, and the
++			 * next access faults with a translation error even
++			 * though the PTE reads back valid.
++			 */
++			if (pmap == current_pmap()) {
++				uint64_t pa_want = (pmap->ttep & TTBR_BADDR_MASK) |
++				    ((uint64_t)pmap->hw_asid << TTBR_ASID_SHIFT);
++				uint64_t pa_got = get_mmu_ttb();
++
++				if (pa_got != pa_want) {
++					static int polaris_pa_n;
++
++					if (polaris_pa_n < 12) {
++						polaris_pa_n++;
++						polaris_note("PA", pa_got, pa_want,
++						    (uint64_t)pmap);
++					}
++					set_mmu_ttb(pa_want);
++					__builtin_arm_isb(ISB_SY);
++				}
++			}
+ 			if (polaris_pt_n < 24) {
+ 				polaris_pt_n++;
+ 				polaris_note("PT", (uint64_t)v, (uint64_t)pte,
