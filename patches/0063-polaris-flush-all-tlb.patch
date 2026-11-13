@@ -1,0 +1,33 @@
+diff --git a/osfmk/arm/pmap.c b/osfmk/arm/pmap.c
+index f816b18..facaa6b 100644
+--- a/osfmk/arm/pmap.c
++++ b/osfmk/arm/pmap.c
+@@ -8369,8 +8369,27 @@ pmap_enter_pte(pmap_t pmap, pt_entry_t *pte_p, pt_entry_t pte, vm_map_address_t
+ 			 * PTE still reads back valid.
+ 			 */
+ 			__builtin_arm_dsb(DSB_ISH);
+-			flush_mmu_tlb_full_asid_async(pmap);
++			/*
++			 * POLARIS: PT/PE/PG now all say ASID 3 and PA never
++			 * fires, yet the next access still faults.  The fork
++			 * child and hello were handed the same ASID, so TLB
++			 * entries belonging to one address space satisfy
++			 * lookups made in the other.  Flushing this pmap's ASID
++			 * cannot remove the other's entries; flush every ASID
++			 * and print the pmap pair so the next screen says
++			 * whether the mapping and the fault even share a pmap.
++			 */
++			flush_mmu_tlb_async();
+ 			pmap_sync_tlb(true);
++			{
++				static int polaris_pc_n;
++
++				if (polaris_pc_n < 12) {
++					polaris_pc_n++;
++					polaris_note("PC", (uint64_t)pmap,
++					    (uint64_t)current_pmap(), (uint64_t)v);
++				}
++			}
+ 			/*
+ 			 * POLARIS: make TTBR0 agree with this pmap's ASID.  The
+ 			 * panel shows "PT ... 4" (pmap->hw_asid) next to
