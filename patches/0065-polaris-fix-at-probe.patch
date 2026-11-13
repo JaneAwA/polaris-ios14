@@ -1,0 +1,60 @@
+diff --git a/osfmk/arm/pmap.c b/osfmk/arm/pmap.c
+index 464d1a5..82f69a8 100644
+--- a/osfmk/arm/pmap.c
++++ b/osfmk/arm/pmap.c
+@@ -8393,24 +8393,47 @@ pmap_enter_pte(pmap_t pmap, pt_entry_t *pte_p, pt_entry_t pte, vm_map_address_t
+ 			{
+ 				/*
+ 				 * POLARIS: ask the hardware to translate the
+-				 * address we just mapped.  PAR_EL1 bit 0 set
+-				 * means the walk failed: the page tables the
+-				 * CPU walks are not the ones pmap_pte() just
+-				 * wrote.  A successful walk with the expected
+-				 * PA leaves only the TLB in the picture.
++				 * address we just mapped.  The first version let
++				 * the compiler put %0 and %1 in one register, and
++				 * every AT line printed the same value for
++				 * different VAs.  Pin the input to x9, mark the
++				 * output early-clobber, and keep only PAR's 48
++				 * valid bits.
+ 				 */
+ 				static int polaris_at_n;
+ 				uint64_t at_par;
++				register uint64_t at_v __asm__("x9") = (uint64_t)v;
+ 
+ 				__asm__ volatile("at s1e0r, %1\n\t"
++				    "dsb sy\n\t"
+ 				    "isb\n\t"
+ 				    "mrs %0, par_el1"
+-				    : "=r"(at_par) : "r"((uint64_t)v));
++				    : "=&r"(at_par) : "r"(at_v) : "memory");
+ 
+ 				if (polaris_at_n < 24) {
+ 					polaris_at_n++;
+-					polaris_note("AT", at_par, (uint64_t)v,
+-					    (uint64_t)pte);
++					polaris_note("AT",
++					    at_par & 0xFFFFFFFFFFFFULL,
++					    (uint64_t)v, (uint64_t)pte);
++				}
++			}
++			{
++				/*
++				 * POLARIS: the PTE pointer pmap_pte() returns
++				 * lives in the pmap's KVA alias (pmap->tte),
++				 * while the CPU walks pmap->ttep.  Printing
++				 * both next to the pointer makes it obvious
++				 * whether the two views can diverge.
++				 */
++				static int polaris_ar_n;
++
++				if (polaris_ar_n < 6) {
++					pt_entry_t *ar_pte = pmap_pte(pmap, v);
++
++					polaris_ar_n++;
++					polaris_note("AR", (uint64_t)ar_pte,
++					    (uint64_t)pmap->tte,
++					    (uint64_t)pmap->ttep);
+ 				}
+ 			}
+ 			/*
